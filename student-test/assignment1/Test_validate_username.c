@@ -20,5 +20,7 @@ void test_validate_my_username()
      */
     //TEST_ASSERT_TRUE_MESSAGE(false,"AESD students, please fix me!");
     //TEST_ASSERT_EQUAL_STRING (expected, actual);
-    TEST_ASSERT_EQUAL_STRING(my_username(), malloc_username_from_conf_file()); //SV: string compare
+    char *actual = malloc_username_from_conf_file();
+    TEST_ASSERT_EQUAL_STRING(my_username(), actual); //SV: string compare
+    free(actual); //avoid memory leak
 }

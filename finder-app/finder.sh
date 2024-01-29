@@ -23,14 +23,14 @@ then
 fi
 
 # Number of files in the directory and all subdirectories
-X=$(find "$filesdir" -type f | wc -l) #finds files in dir and counts lines of find command
+num_files=$(find "$filesdir" -type f | wc -l) #finds files in dir and counts lines of find command
 # find "$filesdir" = searches for files in dir
 # -type f = option of find that says to search for files only
 # | = pipe; takes left command ouput and gives to right command input
 # wc -l = wc stands for word count, -l number of lines
 
 # Number of matching lines (line which contains searchstr and may also contain additional content) found in respective files
-Y=$(grep -r "$searchstr" "$filesdir" | wc -l) #searches recursively serachstr in filesdir and counts lines of output
+num_lines=$(grep -r "$searchstr" "$filesdir" | wc -l) #searches recursively serachstr in filesdir and counts lines of output
 # grep = search text pattern in file
 # -r = search recursively in dirs
 # "$searcstr" = string to search for by grep
@@ -39,4 +39,4 @@ Y=$(grep -r "$searchstr" "$filesdir" | wc -l) #searches recursively serachstr in
 # wc -l = wc stands for word count, -l number of lines
 
 # Prints message
-echo "The number of files are $X and the number of matching lines are $Y"
+echo "The number of files are $num_files and the number of matching lines are $num_lines"
