@@ -1,5 +1,13 @@
 #include "systemcalls.h"
+#include <sys/types.h> // To use data type pid_t
+#include <unistd.h> //Fork, execv
+#include <sys/wait.h>  // wait
+#include <stdlib.h> //exit
+#include <stdio.h> //printf
+#include <fcntl.h> //file control
 
+#define SUCCESS (0)
+#define FAILURE (-1)
 /**
  * @param cmd the command to execute with system()
  * @return true if the command in @param cmd was executed
@@ -16,8 +24,11 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
-
-    return true;
+    if (system(cmd) != SUCCESS) //if system function failure, return false
+    {
+	    return false;
+    }
+    return true; //if system function success, return true
 }
 
 /**
@@ -47,7 +58,7 @@ bool do_exec(int count, ...)
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    //command[count] = command[count];
 
 /*
  * TODO:
@@ -58,8 +69,37 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
-
     va_end(args);
+
+    pid_t pid = fork(); //process identification datatype; fork creates child process
+    if(pid == FAILURE)
+    {
+	    printf("Error: Fork Failed! No child process created\n");
+	    return false;
+    }
+    else if (pid == SUCCESS)
+    {
+	    printf("Child process\n");
+	    // int execv(const char *pathname, char *const argv[]); //Ref: Linux Man page
+	    int execv_retval = execv(command[0],command);
+	    if(execv_retval == FAILURE) //returns only on err
+	    {
+		    printf("Error: Execv Failed!\n");
+		    exit(EXIT_FAILURE);
+	    }
+    }
+    else
+    {
+	    int wstatus;
+	    printf("Parent Process\n");
+	    //wait for child process to finish
+	    pid = wait(&wstatus); //Ref: https://man7.org/linux/man-pages/man2/wait.2.html
+	    if (pid == FAILURE || wstatus != 0)
+	    {
+		    printf("Error: Wait Failure!\n");
+		    return false;
+	    }
+    }
 
     return true;
 }
@@ -82,7 +122,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    //command[count] = command[count];
 
 
 /*
@@ -93,6 +133,46 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *
 */
 
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644); //Given stackoverflow ref
+    if (fd == FAILURE)
+    {
+	    printf("Error: File Opening!\n");
+	    exit(FAILURE);
+    }
+
+    pid_t pid = fork(); //process identification datatype; fork creates child process
+    if(pid == FAILURE)
+    {
+            printf("Error: Fork Failed! No child process created\n");
+            return false;
+    }
+    else if (pid == SUCCESS)
+    {
+            printf("Child process\n");
+	    if (dup2(fd, 1) == FAILURE) //duplicate file descriptor fd to stdout 1; Given stackoverflow ref
+	    { 
+		    printf("Error: Duplicate file descriptor fd to stdout\n");
+		    return false;
+	    }
+	    close(fd);
+
+            // int execv(const char *pathname, char *const argv[]); //Ref: Linux Man page
+            execv(command[0],command); //returns only on err
+            printf("Error: Execv Failed!\n");
+            return false;
+    }
+    else
+    {
+            int wstatus;
+            printf("Parent Process\n");
+            //wait for child process to finish
+            pid = wait(&wstatus); //Ref: https://man7.org/linux/man-pages/man2/wait.2.html
+            if (pid == FAILURE || wstatus != SUCCESS)
+            {
+                    printf("Error: Wait Failure!\n");
+                    return false;
+            }
+    }
     va_end(args);
 
     return true;
