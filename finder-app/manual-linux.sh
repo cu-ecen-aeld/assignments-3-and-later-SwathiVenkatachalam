@@ -147,5 +147,4 @@ find . | cpio -H newc -ov --owner root:root > ../initramfs.cpio
 
 cd ..
 gzip -f initramfs.cpio
-echo "COMPLETE: SUCCESSFUL RUN manual-linux.sh"
-
+echo "SUCCESSFUL RUN manual-linux.sh"
