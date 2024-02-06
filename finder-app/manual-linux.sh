@@ -51,7 +51,7 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
 
     ## modules
     # Build any kernel modules
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- modules
+   # make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- modules
 
     ## device trees
     # Build the devicetree
@@ -107,7 +107,7 @@ ${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
 ${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
-SYSROOT=$(aarch64-none-linux-gnu-gcc --print-sysroot)
+SYSROOT=$(${CROSS_COMPILE}gcc -print-sysroot)
 
 cp "${SYSROOT}/lib/ld-linux-aarch64.so.1" "${OUTDIR}/rootfs/lib/"
 
@@ -148,5 +148,5 @@ find . | cpio -H newc -ov --owner root:root > ../initramfs.cpio
 
 cd ..
 gzip -f initramfs.cpio
-echo "COMPLETE"
+echo "COMPLETE: SUCCESSFUL RUN manual-linux.sh"
 
