@@ -40,8 +40,9 @@
  *
  *            : [17] Singly Linked List - https://github.com/stockrt/queue.h/blob/master/sample.c, 
  *                                        https://raw.githubusercontent.com/freebsd/freebsd/stable/10/sys/sys/queue.h
- *            : [18] pthread_create - https://www.man7.org/linux/man-pages/man3/pthread_create.3.html
- *            : [19] pthread_join - https://www.man7.org/linux/man-pages/man3/pthread_join.3.html
+ *            : [18] pthread_create     - https://www.man7.org/linux/man-pages/man3/pthread_create.3.html
+ *            : [19] pthread_join       - https://www.man7.org/linux/man-pages/man3/pthread_join.3.html
+ *            : [20] strftime           - https://man7.org/linux/man-pages/man3/strftime.3.html
  *
  * Update     : Assignment 6 Part 1 
  * Description:  15) Multiple connections are accepted simultaneously using pthread and content is written to DATA_FILE, logged every 10 secs utilizing locks
@@ -92,15 +93,15 @@ FILE *file_ptr;                                   // fopen return val
 char* ip_address;                                 // inet_ntoa return val
 
 pthread_mutex_t lock;                             // For writing to DATA_FILE and timestamp   
-bool signal_exit = false;     
-bool timer_exit = false;         
+bool signal_exit = false;                         // Flag to indicate signal detected
+bool timer_exit  = false;                         // Flag to indicate timer end
 
 /*************************************************************************
  *                        Structures                                     *
  *************************************************************************/
-struct timespec time_now, time_sleep = {10, 0};
-struct tm time_info;
- 
+struct timespec time_now, time_sleep = {10, 0};  // For timestamp after 10 sec
+struct tm time_info;                             // store time
+  
 // Ref: [17] sample.c
 // Singly Linked List
 typedef struct slist_client_s slist_client_t;
@@ -113,7 +114,9 @@ struct slist_client_s
 };
 
 // SLIST_HEAD(name, type)
-SLIST_HEAD(slisthead, slist_client_s) head;
+SLIST_HEAD(slisthead, slist_client_s) head;        // Head of LL
+
+struct slist_client_s *temp;                       // SLIST_FOREACH_SAFE function arg
 
 /*************************************************************************
  *                    Cleanup Function                                   *
@@ -127,7 +130,7 @@ void cleanup()
     syslog(LOG_INFO, "Caught signal, exiting");               
     closelog();
     
-    struct slist_client_s *new_client_node, *temp;
+    struct slist_client_s *new_client_node;
     SLIST_FOREACH_SAFE(new_client_node, &head, entries, temp)
     {
         pthread_join( new_client_node->thread_id, NULL );
@@ -177,75 +180,75 @@ void *multithread_handler(void *new_client_node)
 	/*************************************************************************
      *                            Receive                                    *
      *************************************************************************/ 
-      	pthread_mutex_lock(&lock);
+    pthread_mutex_lock(&lock);
     // Receives data over the connection and appends to file /var/tmp/aesdsocketdata, creating this file if it doesn’t exist.
-        if ((file_ptr = fopen(DATA_FILE, "a+")) == NULL) //opens file in append and update mode and checks if error
-		{
-        	syslog(LOG_ERR,"Error while opening given file; fopen() failure\n"); //syslog error
-			printf("Error! fopen() failure\n"); //prints error
-			pthread_exit(NULL);
-		}
-    	char buffer[BUFFER_SIZE];
+    if ((file_ptr = fopen(DATA_FILE, "a+")) == NULL) //opens file in append and update mode and checks if error
+    {
+        syslog(LOG_ERR,"Error while opening given file; fopen() failure\n"); //syslog error
+		printf("Error! fopen() failure\n"); //prints error
+		pthread_exit(NULL);
+	}
+    char buffer[BUFFER_SIZE];
     	
-        while(1)
+    while(1)
+    {
+        // Ref: [12] man page
+        // receive - returns the number of bytes actually read into the buffer
+        // int recv(int sockfd, void *buf, int len, int flags);
+        int num_bytes = recv(thread_param->newfd, buffer, sizeof(buffer), 0); // Receive data from the newfd socket into the buffer. It reads up to sizeof(buffer) bytes at a time.
+        if (num_bytes == RET_FAILURE)
         {
-            // Ref: [12] man page
-            // receive - returns the number of bytes actually read into the buffer
-        	// int recv(int sockfd, void *buf, int len, int flags);
-        	int num_bytes = recv(thread_param->newfd, buffer, sizeof(buffer), 0); // Receive data from the newfd socket into the buffer. It reads up to sizeof(buffer) bytes at a time.
-        	if (num_bytes == RET_FAILURE)
-        	{
-        		syslog(LOG_ERR,"Error while receiving; recv() failure\n"); //syslog error
-			    printf("Error! recv() failure/n");                           //prints error	
-			    break;
-        	}
-        	
-        	// Ref: [13] man page
-        	// Received data written to file
-        	// size_t fwrite(const void *ptr, size_t size, size_t count, FILE *stream);
-        	fwrite(buffer, 1, num_bytes, file_ptr);
-        	
-        	// Ref: [14] man page
-        	// memchr - Scan memory for a character
-        	// void *memchr(const void s[.n], int c, size_t n);
-        	if (memchr(buffer, '\n', num_bytes) != NULL) // check '\n' in the received data. If so break out of loop, indicating end of a data packet
-            	break;
+        	syslog(LOG_ERR,"Error while receiving; recv() failure\n"); //syslog error
+			printf("Error! recv() failure/n");                           //prints error	
+			break;
         }
+        	
+        // Ref: [13] man page
+        // Received data written to file
+        // size_t fwrite(const void *ptr, size_t size, size_t count, FILE *stream);
+        fwrite(buffer, 1, num_bytes, file_ptr);
+        	
+        // Ref: [14] man page
+        // memchr - Scan memory for a character
+        // void *memchr(const void s[.n], int c, size_t n);
+        if (memchr(buffer, '\n', num_bytes) != NULL) // check '\n' in the received data. If so break out of loop, indicating end of a data packet
+            break;
+    }
         
-        fclose(file_ptr);       
-        pthread_mutex_unlock(&lock);
+    fclose(file_ptr);       
+    pthread_mutex_unlock(&lock);
         
      /*************************************************************************
       *                            Send                                       *
       *************************************************************************/ 
-        pthread_mutex_lock(&lock);
-        // Returns the full content of /var/tmp/aesdsocketdata to the client as soon as the received data packet completes.
-        if ((file_ptr = fopen(DATA_FILE, "r")) == NULL) //opens file in read mode and checks if error
-		{
-        	syslog(LOG_ERR,"Error while opening given file; fopen() failure\n"); //syslog error
-			printf("Error! fopen() failure\n"); //prints error
-			pthread_exit(NULL);
-		}
+    pthread_mutex_lock(&lock);
+    // Returns the full content of /var/tmp/aesdsocketdata to the client as soon as the received data packet completes.
+    if ((file_ptr = fopen(DATA_FILE, "r")) == NULL)                               //opens file in read mode and checks if error
+	{
+        syslog(LOG_ERR,"Error while opening given file; fopen() failure\n");      //syslog error
+		printf("Error! fopen() failure\n");                                       //prints error
+		pthread_exit(NULL);
+	}
         
-    	while (!feof(file_ptr))
-    	{
-    	    // Ref: [15] man page
-        	// Reads data from file
-        	// size_t fread(const void *ptr, size_t nmemb, size_t count, FILE *stream);
-        	ssize_t read_bytes = fread(buffer, 1, sizeof(buffer), file_ptr);
-        	if (read_bytes <= 0) 
-            		break;
+    while (!feof(file_ptr))
+    {
+    	// Ref: [15] man page
+        // Reads data from file
+        // size_t fread(const void *ptr, size_t nmemb, size_t count, FILE *stream);
+        ssize_t read_bytes = fread(buffer, 1, sizeof(buffer), file_ptr);
+        if (read_bytes <= 0) 
+            break;
 
-        	// Ref: [16] man page
-        	// Returns data to client newfd
-        	// ssize_t send(int sockfd, const void buf[.len], size_t len, int flags);
-        	send(thread_param->newfd, buffer, read_bytes, 0);
-    	}
+        // Ref: [16] man page
+        // Returns data to client newfd
+        // ssize_t send(int sockfd, const void buf[.len], size_t len, int flags);
+        send(thread_param->newfd, buffer, read_bytes, 0);
+    }
     	
-    	fclose(file_ptr); 
-    	pthread_mutex_unlock(&lock);
-    	thread_param->thread_completion_flag = 1;
-    	pthread_exit(NULL);
+    fclose(file_ptr); 
+    pthread_mutex_unlock(&lock);
+    thread_param->thread_completion_flag = 1;
+    pthread_exit(NULL);
 }
 
 /*************************************************************************
@@ -258,23 +261,24 @@ void *timestamp_handler (void *arg)
 
     while (!timer_exit)
     {
-        clock_gettime(CLOCK_REALTIME, &time_now); // Get current time with nanosec        
-        localtime_r( &time_now.tv_sec, &time_info); // Convert timespec to tm 
+        clock_gettime(CLOCK_REALTIME, &time_now);                                        // Get current time with nanosec        
+        localtime_r( &time_now.tv_sec, &time_info);                                      // Convert timespec to tm 
         strftime(buffer, sizeof(buffer), RFC2822_compliant_strftime_format, &time_info); // Format date and time 
 
         pthread_mutex_lock(&lock);
         
-        if ((file_ptr = fopen(DATA_FILE, "a+")) == NULL) //opens file in append mode and checks if error
+        if ((file_ptr = fopen(DATA_FILE, "a+")) == NULL)                                 //opens file in append mode and checks if error
 		{
-        	syslog(LOG_ERR,"Error while opening given file; fopen() failure\n"); //syslog error
-			printf("Error! fopen() failure\n");                                  //prints error
+        	syslog(LOG_ERR,"Error while opening given file; fopen() failure\n");         //syslog error
+			printf("Error! fopen() failure\n");                                          //prints error
 			pthread_mutex_unlock(&lock);
 			pthread_exit(NULL);
 		}
         
         if (fwrite("timestamp:", 1, strlen("timestamp:"), file_ptr) != strlen("timestamp:"))
         {
-            syslog( LOG_ERR, "Failed to write timestamp to file" );
+            syslog( LOG_ERR, "Error while writing to given file; fwrite() failure\n" );
+            printf("Error! fwrite() failure\n");                                        //prints error
             fclose(file_ptr);
             pthread_mutex_unlock(&lock);
             pthread_exit(NULL);
@@ -282,7 +286,8 @@ void *timestamp_handler (void *arg)
 
         if (fwrite(buffer, 1, strlen(buffer), file_ptr) != strlen(buffer))
         {
-            syslog( LOG_ERR, "Failed to write timestamp to file" );
+            syslog( LOG_ERR, "Error while writing to given file; fwrite() failure\n" );
+            printf("Error! fwrite() failure\n");                                       //prints error
             fclose(file_ptr);
             pthread_mutex_unlock(&lock);
             pthread_exit(NULL);
@@ -311,7 +316,7 @@ int main(int argc, char* argv[])
     // Ref: [2] man page
     // Opens a connection to the system logger for a program
     // openlog(ident, option, facility)
-    openlog(NULL, LOG_PID, LOG_USER); // Program name, Caller's PID, default LOG_USER - generic user-level messages
+    openlog(NULL, LOG_PID, LOG_USER);                                                       // Program name, Caller's PID, default LOG_USER - generic user-level messages
     syslog(LOG_INFO,"Success: Starting log...\n");
 
     /*************************************************************************
@@ -469,7 +474,7 @@ int main(int argc, char* argv[])
     // When in daemon mode the program should fork after ensuring it can bind to port 9000.
     if (daemon)
     {
-        pid_t pid = fork();      // Create child process, sets pid = 0; in parent process pid stores process id of child 
+        pid_t pid = fork();                                                                      // Create child process, sets pid = 0; in parent process pid stores process id of child 
 
     	if (pid == RET_FAILURE)
     	{
@@ -504,7 +509,11 @@ int main(int argc, char* argv[])
         exit(FAILURE);        
     }
     syslog(LOG_INFO,"Success: listen()\n");
-    
+
+     /*************************************************************************
+      *                          Lock Init                                    *
+      *************************************************************************/ 
+          
     // int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr);
     rc = pthread_mutex_init(&lock, NULL);                                            // Initialize a mutex
     if (rc != SUCCESS)                                     // Returns error code on failure
@@ -514,29 +523,34 @@ int main(int argc, char* argv[])
         closelog();
         exit(FAILURE);                
     }
+    // For LL
     // SLIST_INIT(head)
     SLIST_INIT(&head);
-   
-pthread_t timestamp_thread;                       // 
     
-            rc = pthread_create(&timestamp_thread,   // Thread ID
-                            NULL,                          // Default attr
-                            timestamp_handler,           // Handle connection made
-                            NULL);        // No args
+     /*************************************************************************
+      *                          Timestamp                                   *
+      *************************************************************************/ 
+   
+    pthread_t timestamp_thread;                       // thread_id
+    
+    rc = pthread_create(&timestamp_thread,   // Thread ID
+                        NULL,                          // Default attr
+                        timestamp_handler,           // Handle timestamp
+                        NULL);        // No args
         
-        if (rc != SUCCESS)                                     // Returns error code on failure
-        {
-            syslog(LOG_ERR,"Error creating thread; pthread_create() failure\n"); //syslog error
-            printf("Error! pthread_create() failure\n");                         //prints error                                          // Free ptr  
-            closelog();
-            exit(FAILURE);                
-        }
+    if (rc != SUCCESS)                                     // Returns error code on failure
+    {
+        syslog(LOG_ERR,"Error creating thread; pthread_create() failure\n"); //syslog error
+        printf("Error! pthread_create() failure\n");                         //prints error                                          // Free ptr  
+        closelog();
+        exit(FAILURE);                
+    }
 
     // Restarts accepting connections from new clients forever in a loop until SIGINT or SIGTERM is received
     while(!signal_exit)
     {
      /*************************************************************************
-      *                            Accept                                     *
+      *                    Accept multiple                                    *
       *************************************************************************/ 
       
         //Ref: [9] man page, [1] beej guide
@@ -584,12 +598,12 @@ pthread_t timestamp_thread;                       //
         //                    const pthread_attr_t *attr,
         //                    void *(*start_routine)(void *),
         //                    void *arg);
-        rc = pthread_create(&new_client_node->thread_id,   // Thread ID
-                            NULL,                          // Default attr
-                            multithread_handler,           // Handle connection made
-                            (void *)new_client_node);        // Send new client node data as arg
+        rc = pthread_create(&new_client_node->thread_id,                     // Thread ID
+                            NULL,                                            // Default attr
+                            multithread_handler,                             // Handle connection made
+                            (void *)new_client_node);                        // Send new client node data as arg
         
-        if (rc != SUCCESS)                                     // Returns error code on failure
+        if (rc != SUCCESS)                                                   // Returns error code on failure
         {
             syslog(LOG_ERR,"Error creating thread; pthread_create() failure\n"); //syslog error
             printf("Error! pthread_create() failure\n");                         //prints error
@@ -602,11 +616,8 @@ pthread_t timestamp_thread;                       //
             exit(FAILURE);                
         }
         syslog(LOG_INFO,"Success: pthread_create()\n");
-        
-        // SLIST_FOREACH(var, head, field)
-        //SLIST_FOREACH_SAFE(new_client_node, &head, entries, temp)
-                struct slist_client_s *nextThread;
-        SLIST_FOREACH_SAFE( new_client_node, &head, entries, nextThread)
+           
+        SLIST_FOREACH_SAFE(new_client_node, &head, entries, temp)
         {
              if (new_client_node->thread_completion_flag)
              {
@@ -614,11 +625,11 @@ pthread_t timestamp_thread;                       //
                  // pthread_join - join with a terminated thread
                  // pthread_join(pthread_t thread, void **retval);
                  rc = pthread_join(new_client_node->thread_id, NULL);
-                 SLIST_REMOVE(&head, new_client_node, slist_client_s, entries);  // Remove node from LL
+                 SLIST_REMOVE(&head, new_client_node, slist_client_s, entries);         // Remove node from LL
                  free(new_client_node);
                  if (rc != SUCCESS)   
                  {
-                     syslog(LOG_ERR,"Error joining thread; pthread_join() failure\n"); //syslog error
+                     syslog(LOG_ERR,"Error joining thread; pthread_join() failure\n");  //syslog error
                      printf("Error! pthread_join() failure\n");                         //prints error 
                    
                      closelog();
