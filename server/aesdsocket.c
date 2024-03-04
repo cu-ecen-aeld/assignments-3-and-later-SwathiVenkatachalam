@@ -42,7 +42,11 @@
  *                                        https://raw.githubusercontent.com/freebsd/freebsd/stable/10/sys/sys/queue.h
  *            : [18] pthread_create     - https://www.man7.org/linux/man-pages/man3/pthread_create.3.html
  *            : [19] pthread_join       - https://www.man7.org/linux/man-pages/man3/pthread_join.3.html
- *            : [20] strftime           - https://man7.org/linux/man-pages/man3/strftime.3.html
+ *            : [20] timespec           - https://www.man7.org/linux/man-pages/man3/timespec.3type.html
+ *            : [21] tm                 - https://www.man7.org/linux/man-pages/man3/tm.3type.html
+ *            : [22] strftime           - https://man7.org/linux/man-pages/man3/strftime.3.html
+ *            : [23] clock_gettime      - https://www.man7.org/linux/man-pages/man2/clock_gettime.2.html
+ *            : [24] localtime_r        - httpshttps://linux.die.net/man/3/localtime_r
  *
  * Update     : Assignment 6 Part 1 
  * Description:  15) Multiple connections are accepted simultaneously using pthread and content is written to DATA_FILE, logged every 10 secs utilizing locks
@@ -82,6 +86,8 @@
 #define PORT                              ("9000")                      // For Opening a stream socket bound to port 9000
 #define DATA_FILE                         ("/var/tmp/aesdsocketdata")   // Receives data over the connection and appends to this file 
 #define BUFFER_SIZE                       (128)
+
+// Ref: [22] man page
 #define RFC2822_compliant_strftime_format ("%a, %d %b %Y %T %z\n")
 
 /*************************************************************************
@@ -99,11 +105,36 @@ bool timer_exit  = false;                         // Flag to indicate timer end
 /*************************************************************************
  *                        Structures                                     *
  *************************************************************************/
-struct timespec time_now, time_sleep = {10, 0};  // For timestamp after 10 sec
-struct tm time_info;                             // store time
+// Ref: [20] man page
+// timespec - time in seconds and nanoseconds
+// Member obj: time_t tv_sec, tv_nsec
+struct timespec time_now, time_sleep = {10, 0};  // For timestamp after 10 sec, 0 nanosec
+
+// Ref: [21] man page
+// tm - broken-down time
+/* struct tm {
+	int         tm_sec;    // Seconds          [0, 60] 
+    int         tm_min;    // Minutes          [0, 59] 
+    int         tm_hour;   // Hour             [0, 23] 
+    int         tm_mday;   // Day of the month [1, 31] 
+    int         tm_mon;    // Month            [0, 11]  (January = 0)
+    int         tm_year;   // Year minus 1900 
+    int         tm_wday;   // Day of the week  [0, 6]   (Sunday = 0) 
+    int         tm_yday;   // Day of the year  [0, 365] (Jan/01 = 0) 
+    int         tm_isdst;  // Daylight savings flag 
+
+    long        tm_gmtoff; // Seconds East of UTC 
+    const char *tm_zone;   // Timezone abbreviation 
+}; */
+struct tm time_info;                                // time info in tm
   
-// Ref: [17] sample.c
+// Ref: [17] sample.c, queue.h
 // Singly Linked List
+/*
+#define	SLIST_ENTRY(type)						\
+struct {								\
+	struct type *sle_next;	/* next element */			\
+}*/
 typedef struct slist_client_s slist_client_t;
 struct slist_client_s 
 {
@@ -113,7 +144,10 @@ struct slist_client_s
     SLIST_ENTRY(slist_client_s) entries;
 };
 
-// SLIST_HEAD(name, type)
+/* SLIST_HEAD(name, type)
+struct name {								\
+	struct type *slh_first;	/* first element */			\
+}*/
 SLIST_HEAD(slisthead, slist_client_s) head;        // Head of LL
 
 struct slist_client_s *temp;                       // SLIST_FOREACH_SAFE function arg
@@ -131,11 +165,18 @@ void cleanup()
     closelog();
     
     struct slist_client_s *new_client_node;
+    
+    // Ref: [17] queue.h
+    /*
+    #define	SLIST_FOREACH_SAFE(var, head, field, tvar)			\
+	for ((var) = SLIST_FIRST((head));				\
+	    (var) && ((tvar) = SLIST_NEXT((var), field), 1);		\
+	    (var) = (tvar))*/
     SLIST_FOREACH_SAFE(new_client_node, &head, entries, temp)
     {
-        pthread_join( new_client_node->thread_id, NULL );
-        SLIST_REMOVE( &head, new_client_node, slist_client_s, entries );
-        free( new_client_node);
+        pthread_join(new_client_node->thread_id, NULL);
+        SLIST_REMOVE(&head, new_client_node, slist_client_s, entries);
+        free(new_client_node);
     }
     syslog(LOG_INFO, "Program completed successfully!"); 
     exit(SUCCESS);
@@ -185,9 +226,9 @@ void *multithread_handler(void *new_client_node)
     if ((file_ptr = fopen(DATA_FILE, "a+")) == NULL) //opens file in append and update mode and checks if error
     {
         syslog(LOG_ERR,"Error while opening given file; fopen() failure\n"); //syslog error
-		printf("Error! fopen() failure\n"); //prints error
-		pthread_exit(NULL);
-	}
+	printf("Error! fopen() failure\n"); //prints error
+	return NULL;
+    }
     char buffer[BUFFER_SIZE];
     	
     while(1)
@@ -227,7 +268,7 @@ void *multithread_handler(void *new_client_node)
 	{
         syslog(LOG_ERR,"Error while opening given file; fopen() failure\n");      //syslog error
 		printf("Error! fopen() failure\n");                                       //prints error
-		pthread_exit(NULL);
+		return NULL;
 	}
         
     while (!feof(file_ptr))
@@ -248,7 +289,7 @@ void *multithread_handler(void *new_client_node)
     fclose(file_ptr); 
     pthread_mutex_unlock(&lock);
     thread_param->thread_completion_flag = 1;
-    pthread_exit(NULL);
+    return NULL;
 }
 
 /*************************************************************************
@@ -257,12 +298,21 @@ void *multithread_handler(void *new_client_node)
  
 void *timestamp_handler (void *arg)
 {
-    char buffer[BUFFER_SIZE];
+    char buffer[BUFFER_SIZE];                                                           // To store formatted time and date
 
     while (!timer_exit)
     {
-        clock_gettime(CLOCK_REALTIME, &time_now);                                        // Get current time with nanosec        
+        // Ref: [23] man page
+        // clock_gettime(clockid_t clockid, struct timespec *tp);
+        clock_gettime(CLOCK_REALTIME, &time_now);                                        // Get current time with nanosec
+        
+        // Ref: [24] man page
+        // struct tm *localtime_r(const time_t *timep, struct tm *result);        
         localtime_r( &time_now.tv_sec, &time_info);                                      // Convert timespec to tm 
+        
+        // Ref: [22] man page
+        // strftime - formats broken-down time tm according to format spec and stores in char arr
+        // size_t strftime(char s[.max], size_t max, const char *format, const struct tm *tm);
         strftime(buffer, sizeof(buffer), RFC2822_compliant_strftime_format, &time_info); // Format date and time 
 
         pthread_mutex_lock(&lock);
@@ -272,35 +322,35 @@ void *timestamp_handler (void *arg)
         	syslog(LOG_ERR,"Error while opening given file; fopen() failure\n");         //syslog error
 			printf("Error! fopen() failure\n");                                          //prints error
 			pthread_mutex_unlock(&lock);
-			pthread_exit(NULL);
+			return NULL;
 		}
         
-        if (fwrite("timestamp:", 1, strlen("timestamp:"), file_ptr) != strlen("timestamp:"))
+        if (fwrite("timestamp:", 1, strlen("timestamp:"), file_ptr) != strlen("timestamp:"))         // Write timestamp string
         {
             syslog( LOG_ERR, "Error while writing to given file; fwrite() failure\n" );
-            printf("Error! fwrite() failure\n");                                        //prints error
+            printf("Error! fwrite() failure\n");                                                     //prints error
             fclose(file_ptr);
             pthread_mutex_unlock(&lock);
-            pthread_exit(NULL);
+            return NULL;
         }
 
-        if (fwrite(buffer, 1, strlen(buffer), file_ptr) != strlen(buffer))
+        if (fwrite(buffer, 1, strlen(buffer), file_ptr) != strlen(buffer))              // Write timestamp formatted 
         {
             syslog( LOG_ERR, "Error while writing to given file; fwrite() failure\n" );
             printf("Error! fwrite() failure\n");                                       //prints error
             fclose(file_ptr);
             pthread_mutex_unlock(&lock);
-            pthread_exit(NULL);
+            return NULL;
         }
 
         fclose(file_ptr);
         
         pthread_mutex_unlock(&lock);
         
-        nanosleep(&time_sleep, NULL);
+        nanosleep(&time_sleep, NULL);                                                   // sleep for 10 sec; time_sleep timespec struct set to 10 sec
     }
     syslog(LOG_INFO,"Success: Timestamp...\n");
-    pthread_exit(NULL);
+    return NULL;
 }
 
 /*************************************************************************
@@ -523,9 +573,6 @@ int main(int argc, char* argv[])
         closelog();
         exit(FAILURE);                
     }
-    // For LL
-    // SLIST_INIT(head)
-    SLIST_INIT(&head);
     
      /*************************************************************************
       *                          Timestamp                                   *
@@ -547,6 +594,14 @@ int main(int argc, char* argv[])
     }
 
     // Restarts accepting connections from new clients forever in a loop until SIGINT or SIGTERM is received
+    
+    // For LL
+    // Ref: [17] queue.h
+    /*
+	#define	SLIST_INIT(head) do {			    \
+	SLIST_FIRST((head)) = NULL;					\
+    } while (0) */	
+    SLIST_INIT(&head);
     while(!signal_exit)
     {
      /*************************************************************************
