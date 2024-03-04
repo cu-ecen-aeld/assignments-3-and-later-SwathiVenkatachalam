@@ -132,8 +132,8 @@ struct tm time_info;                                // time info in tm
 // Singly Linked List
 /*
 #define	SLIST_ENTRY(type)						\
-struct {								\
-	struct type *sle_next;	/* next element */			\
+struct {								        \
+	struct type *sle_next;	// next element     \
 }*/
 typedef struct slist_client_s slist_client_t;
 struct slist_client_s 
@@ -145,8 +145,8 @@ struct slist_client_s
 };
 
 /* SLIST_HEAD(name, type)
-struct name {								\
-	struct type *slh_first;	/* first element */			\
+struct name {								   \
+	struct type *slh_first;	// first element   \
 }*/
 SLIST_HEAD(slisthead, slist_client_s) head;        // Head of LL
 
