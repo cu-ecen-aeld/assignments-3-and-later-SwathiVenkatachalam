@@ -169,7 +169,7 @@ void cleanup()
     // Ref: [17] queue.h
     /*
     #define	SLIST_FOREACH_SAFE(var, head, field, tvar)			\
-	for ((var) = SLIST_FIRST((head));				            \
+	for ((var) = SLIST_FIRST((head));				\
 	    (var) && ((tvar) = SLIST_NEXT((var), field), 1);		\
 	    (var) = (tvar))*/
     SLIST_FOREACH_SAFE(new_client_node, &head, entries, temp)
