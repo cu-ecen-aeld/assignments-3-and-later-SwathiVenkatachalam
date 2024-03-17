@@ -9,6 +9,8 @@
  * @date 2019-10-22
  * @copyright Copyright (c) 2019
  *
+ * @updated Swathi Venkatachalam
+ * @date    2024-03-17
  */
 
 #include <linux/module.h>
@@ -21,8 +23,10 @@
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Your Name Here"); /** TODO: fill in your name **/
+MODULE_AUTHOR("SWATHI VENKATACHALAM"); /** TODO: fill in your name **/
 MODULE_LICENSE("Dual BSD/GPL");
+
+#define SUCCESS (0)  // Return cod checking macro
 
 struct aesd_dev aesd_device;
 
@@ -32,6 +36,18 @@ int aesd_open(struct inode *inode, struct file *filp)
     /**
      * TODO: handle open
      */
+     
+    // Ref: From my A7 scull_open function https://github.com/cu-ecen-aeld/assignment-7-SwathiVenkatachalam/blob/master/scull/main.c
+    struct aesd_dev *dev; // device information
+    
+    // Ref: https://radek.io/2012/11/10/magical-container_of-macro/
+    // container_of(ptr, type, member) macro 
+    // Get ptr to aesd_dev struct; i_cdev is a memeber of inode struct that holds ptr to cdev (char device struct mem of struct aesd_dev)
+    dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
+    
+    // Set file ptr filp->private_data with aesd_dev device struct
+    filp->private_data = dev; 
+
     return 0;
 }
 
@@ -44,25 +60,127 @@ int aesd_release(struct inode *inode, struct file *filp)
     return 0;
 }
 
-ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
-                loff_t *f_pos)
+// Ref: Assignment-8-overview lecture slides
+/*
+Steps to read data from kernel space to user space buf
+
+1. Check input parameters validity
+2. Get aesd_dev using file ptr private data
+3. Lock with error handling
+4. Find entry offset with error handling
+5. Get bytes to read and bytes that can be read checking bounding param count (so wk if it's going to be a complete/ partial read)
+6. Copy to user space buf with error handling
+7. Update f_pos to point to next offset
+8. Retval set to complete/ partial read bytes
+9. Unlock and exit
+
+*/
+// Read data from CB of device considering partial read, EOF and errors.
+
+ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
     ssize_t retval = 0;
     PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
     /**
      * TODO: handle read
      */
+     
+    // Check input parameters validity first
+    // filp - file pointer private_data member used to get aesd_dev
+    // buf - buffer to fill
+    // f_pos - pointer to the read offset; references loc in virtual device (specific byte of CB linear content)
+    if(filp == NULL || buf == NULL || f_pos == NULL)
+    {
+    	PDEBUG("Input parameters of read function invalid; memory access failure\n");
+        return -EFAULT; // mem access failure error code
+    }
+    
+    // Check input parameters validity first
+    // count - max number of bytes to write to buff; may want/need to write less than this
+	if (count == 0)
+	{
+		PDEBUG("No data to write; return success\n");
+		return 0;
+	}
+		
+	// file pointer filp private_data used to get aesd_dev
+	struct aesd_dev *dev = filp->private_data;
+	
+	int rc; // return code storage variable
+	
+	// Lock for safe multi-threaded op
+	rc = mutex_lock_interruptible(&dev->lock); //  check in rc if lock acquisition interrupted by a signal
+	if (rc != SUCCESS)
+	{
+		PDEBUG("Lock failure in read;  lock acquisition was interrupted by a signal");
+		return -ERESTARTSYS;  //restart syscall code
+	}
+	
+	size_t entry_offset_byte_rtn = 0; // contains offset
+	struct aesd_buffer_entry *data_entry = NULL; // initialize to get data entry in CB
+	
+	// From aesd-circular-buffer.h 
+	// struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer, size_t char_offset, size_t *entry_offset_byte_rtn );
+	data_entry = aesd_circular_buffer_find_entry_offset_for_fpos(&device->buffer, *f_pos, &entry_offset_byte_rtn);
+	
+	// Check if entry doesn't exist
+    if(data_entry == NULL)
+    {
+        PDEBUG("No data to read; exit");
+        mutex_unlock(&dev->lock);  // unlock mutex
+        return retval;             // return
+    }
+    
+    size_t bytes_to_read_in_entry = data_entry->size - entry_offset_byte_rtn;
+    size_t bytes_can_be_read = 0;
+    
+    // If bytes to read exceeds max allowed count, can only read till count; considering partial read possibility
+    if (bytes_to_read_in_entry > count)
+    {
+    	PDEBUG("Partial read!\n");
+    	bytes_can_be_read = count;
+    }
+    else
+    {
+        // Considering complete read possible
+     	PDEBUG("Complete read!\n");
+    	bytes_can_be_read = bytes_to_read_in_entry;   	
+    }
+    
+    // use copy_to_user to fill buf from kernel to user spce, as we cannot access buf directly
+    // Ref: https://manpages.org/__copy_to_user/9
+    // copy_to_user(void __user * to, const void * from, unsigned long n);
+    // buf = Destination address, in user space.
+    // data_entry->buffptr + entry_offset_byte_rtn = Source address, in kernel space.(starting pt within buffer to copy from)
+    // bytes_can_be_read = Number of bytes to copy.
+    rc = copy_to_user(buf, data_entry->buffptr + entry_offset_byte_rtn, bytes_can_be_read);
+    if (rc)
+    {
+        PDEBUG("Failed to copy to user space buf; exit");
+        mutex_unlock(&dev->lock);  // unlock mutex
+        return -EFAULT;             // return    	
+    }
+    
+    retval = bytes_can_be_read;  // bytes read stored in retval depending on complete/ partial read
+	*f_pos += retval;            // update f_pos to point to next offset
+     
+    PDEBUG("Read success!");
+    mutex_unlock(&dev->lock);  // unlock mutex 
     return retval;
 }
 
-ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
-                loff_t *f_pos)
+
+// Write data from user space buf to device in kernel space
+ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
     /**
      * TODO: handle write
      */
+     
+     
+     
     return retval;
 }
 struct file_operations aesd_fops = {
@@ -105,6 +223,9 @@ int aesd_init_module(void)
     /**
      * TODO: initialize the AESD specific portion of the device
      */
+     
+	mutex_init(&aesd_device.lock);
+    aesd_circular_buffer_init(&aesd_device.buffer);
 
     result = aesd_setup_cdev(&aesd_device);
 
