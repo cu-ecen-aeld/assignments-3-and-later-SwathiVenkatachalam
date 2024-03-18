@@ -87,7 +87,7 @@
 
 //#define DATA_FILE                         ("/var/tmp/aesdsocketdata")   // Receives data over the connection and appends to this file 
 
-#define USE_AESD_CHAR_DEVICE              (1)
+//#define USE_AESD_CHAR_DEVICE              // comment out of not req
 
 #ifdef USE_AESD_CHAR_DEVICE
     #define DATA_FILE                     ("/dev/aesdchar")
@@ -169,8 +169,8 @@ struct slist_client_s *temp;                       // SLIST_FOREACH_SAFE functio
 void cleanup()
 {
     // Gracefully exits when SIGINT or SIGTERM is received, completing any open connection operations, closing any open sockets, and deleting the file /var/tmp/aesdsocketdata
-    #ifndef(USE_AESD_CHAR_DEVICE)
-    remove(DATA_FILE);
+    #ifndef USE_AESD_CHAR_DEVICE
+    unlink(DATA_FILE);
     #endif
         
     syslog(LOG_INFO, "Caught signal, exiting");               
@@ -381,6 +381,7 @@ int main(int argc, char* argv[])
     // openlog(ident, option, facility)
     openlog(NULL, LOG_PID, LOG_USER);                                                       // Program name, Caller's PID, default LOG_USER - generic user-level messages
     syslog(LOG_INFO,"Success: Starting log...\n");
+    printf("Program starting...\n");
 
     /*************************************************************************
      *                            Daemon mode                                *
@@ -391,7 +392,8 @@ int main(int argc, char* argv[])
      if((argc > 1) && (strcmp(argv[1], "-d") == 0))
      {
      	daemon = 1; 
-     	syslog(LOG_INFO,"Success: Running in daemon mode...\n");     	
+     	syslog(LOG_INFO,"Success: Running in daemon mode...\n"); 
+     	printf("Success: Running in daemon mode...\n");    	
      }
     
     /*************************************************************************
@@ -464,6 +466,7 @@ int main(int argc, char* argv[])
         exit(FAILURE);       
     }
     syslog(LOG_INFO,"Success: getaddrinfo()\n");
+    printf("Success: getaddrinfo()\n");
     
     // Check if addrinfo stored in res from getaddrinfo
     if (res == NULL)
@@ -494,6 +497,7 @@ int main(int argc, char* argv[])
         exit(FAILURE);
     }
     syslog(LOG_INFO,"Success: socket()\n");
+    printf("Success: socket()\n");
     
     // Ref: [6] man page, [1] beej guide
     // setsockopt: set socket options
@@ -509,6 +513,7 @@ int main(int argc, char* argv[])
     	exit(FAILURE);
     }
     syslog(LOG_INFO,"Success: setsockopt()\n");
+    printf("Success: setsockopt()\n");
     
      /*************************************************************************
       *                            Bind                                       *
@@ -522,12 +527,14 @@ int main(int argc, char* argv[])
     {
         syslog(LOG_ERR,"Error binding to the port we passed in to getaddrinfo(); bind() failure\n"); //syslog error
         printf("Error! bind() failure\n");                                                           //prints error
+        perror("");  
         freeaddrinfo(res);
         closelog();
         close(sockfd);
         exit(FAILURE);       
     }
     syslog(LOG_INFO,"Success: bind()\n");
+    printf("Success: bind()\n");
     freeaddrinfo(res);
     
     /*************************************************************************
@@ -572,6 +579,7 @@ int main(int argc, char* argv[])
         exit(FAILURE);        
     }
     syslog(LOG_INFO,"Success: listen()\n");
+    printf("Success: listen()\n");
 
      /*************************************************************************
       *                          Lock Init                                    *
@@ -616,8 +624,12 @@ int main(int argc, char* argv[])
 	SLIST_FIRST((head)) = NULL;					\
     } while (0) */	
     SLIST_INIT(&head);
+    printf("Entering loop to accept!\n");
+    int debug_count = 0;
     while(!signal_exit)
     {
+      debug_count++;
+      printf("Debug_count = %d\n", debug_count);
      /*************************************************************************
       *                    Accept multiple                                    *
       *************************************************************************/ 
@@ -626,15 +638,17 @@ int main(int argc, char* argv[])
         // accept - accept a connection on a socket
         //int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen); 
         clientaddrlen = sizeof(clientaddr);
+                printf("Before accept\n");
         newfd =  accept(sockfd, (struct sockaddr *)&clientaddr, &clientaddrlen);
         if (newfd == RET_FAILURE)
         {
             syslog(LOG_ERR,"Error accepting a connection on a socket; accept() failure\n"); //syslog error
-            // printf("Error! accept() failure\n"); //prints error
+            printf("Error! accept() failure\n"); //prints error
             closelog();
             exit(FAILURE);       
         }
         syslog(LOG_INFO,"Success: accept()\n");
+        printf("Success: accept()\n");
         
         //Logs message to the syslog “Accepted connection from xxx” where XXXX is the IP address of the connected client. 
         // Ref: [10], [11] man pages
@@ -651,6 +665,7 @@ int main(int argc, char* argv[])
         // Get the IP address as a string
         ip_address = inet_ntoa(clientaddr.sin_addr);
         syslog(LOG_USER,"Accepted connection from %s\n", ip_address);
+        printf("Accepted connection from %s\n", ip_address);
         
         // Ref: [17] sample.c
 		// Singly Linked List    
@@ -685,6 +700,7 @@ int main(int argc, char* argv[])
             exit(FAILURE);                
         }
         syslog(LOG_INFO,"Success: pthread_create()\n");
+        printf("Success: pthread_create()\n");
            
         SLIST_FOREACH_SAFE(new_client_node, &head, entries, temp)
         {
@@ -707,6 +723,7 @@ int main(int argc, char* argv[])
              }
         }  
         // Logs message to the syslog “Closed connection from XXX” where XXX is the IP address of the connected client.
-        syslog(LOG_USER, "Closed connection from %s\n", ip_address);          
+        syslog(LOG_USER, "Closed connection from %s\n", ip_address);  
+         printf("Closed connection from %s\n", ip_address);     
     }
 }
