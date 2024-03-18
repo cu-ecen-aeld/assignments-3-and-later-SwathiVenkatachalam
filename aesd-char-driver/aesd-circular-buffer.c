@@ -91,7 +91,10 @@ const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, 
 	if(add_entry == NULL)
     	return ret;
     	
-    
+    if (buffer->full)
+    {
+    	ret = buffer->entry[buffer->in_offs].buffptr;  //return buffer to free b4 overwrite
+    }
     // 1. Adds entry @param add_entry to @param buffer in the location specified in buffer->in_offs; Structure members of add_entry added to buffer
 
     // const char *buffptr; A location where the buffer contents in buffptr are stored
@@ -109,7 +112,6 @@ const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, 
     // in_offs = current location in the entry structure where the next write should be stored.
     if (buffer->full)
     {
-    	ret = buffer->entry[buffer->in_offs].buffptr;  //return buffer to free b4 overwrite
         buffer->out_offs = buffer->in_offs;
     }
     else if (buffer->out_offs == buffer->in_offs)   // Check if both indexes match, if so CB full

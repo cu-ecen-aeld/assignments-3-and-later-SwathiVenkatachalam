@@ -84,7 +84,17 @@
 #define SUCCESS                           (0)
 
 #define PORT                              ("9000")                      // For Opening a stream socket bound to port 9000
-#define DATA_FILE                         ("/var/tmp/aesdsocketdata")   // Receives data over the connection and appends to this file 
+
+//#define DATA_FILE                         ("/var/tmp/aesdsocketdata")   // Receives data over the connection and appends to this file 
+
+#define USE_AESD_CHAR_DEVICE              (1)
+
+#ifdef USE_AESD_CHAR_DEVICE
+    #define DATA_FILE                     ("/dev/aesdchar")
+#else
+    #define DATA_FILE                     ("/var/tmp/aesdsocketdata")
+#endif
+
 #define BUFFER_SIZE                       (128)
 
 // Ref: [22] man page
@@ -159,7 +169,9 @@ struct slist_client_s *temp;                       // SLIST_FOREACH_SAFE functio
 void cleanup()
 {
     // Gracefully exits when SIGINT or SIGTERM is received, completing any open connection operations, closing any open sockets, and deleting the file /var/tmp/aesdsocketdata
+    #ifndef(USE_AESD_CHAR_DEVICE)
     remove(DATA_FILE);
+    #endif
         
     syslog(LOG_INFO, "Caught signal, exiting");               
     closelog();
@@ -201,7 +213,7 @@ void signalhandler (int signal)
 /*************************************************************************
  *               Time Handler Function                                   *
  *************************************************************************/
- 
+#ifndef USE_AESD_CHAR_DEVICE
 void timehandler(int signal)
 { 
     if (signal == SIGALRM)
@@ -209,6 +221,7 @@ void timehandler(int signal)
         timer_exit = true;
     }   
 }
+#endif
 
 /*************************************************************************
  *                  Multithread_handler Function                         *
@@ -295,7 +308,7 @@ void *multithread_handler(void *new_client_node)
 /*************************************************************************
  *                 timestamp_handler Function                         *
  *************************************************************************/
- 
+#ifndef USE_AESD_CHAR_DEVICE
 void *timestamp_handler (void *arg)
 {
     char buffer[BUFFER_SIZE];                                                           // To store formatted time and date
@@ -352,7 +365,7 @@ void *timestamp_handler (void *arg)
     syslog(LOG_INFO,"Success: Timestamp...\n");
     return NULL;
 }
-
+#endif
 /*************************************************************************
  *                       Main Function                                   *
  *************************************************************************/
@@ -577,7 +590,7 @@ int main(int argc, char* argv[])
      /*************************************************************************
       *                          Timestamp                                   *
       *************************************************************************/ 
-   
+   #ifndef USE_AESD_CHAR_DEVICE
     pthread_t timestamp_thread;                       // thread_id
     
     rc = pthread_create(&timestamp_thread,   // Thread ID
@@ -592,6 +605,7 @@ int main(int argc, char* argv[])
         closelog();
         exit(FAILURE);                
     }
+    #endif
 
     // Restarts accepting connections from new clients forever in a loop until SIGINT or SIGTERM is received
     
