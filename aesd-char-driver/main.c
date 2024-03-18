@@ -229,7 +229,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     // write_data_uspace = Destination address, in kernel space.
     // buf = Source address, in user space
     // count = Number of bytes to copy.
-    rc = copy_to_user(write_data_uspace, buf, count);
+    rc = copy_from_user(write_data_uspace, buf, count);
     if (rc)
     {
         PDEBUG("Failed to copy from user space buf; exit");
