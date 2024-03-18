@@ -12,7 +12,6 @@
  * @updated Swathi Venkatachalam
  * @date    2024-03-17
  */
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/printk.h>
