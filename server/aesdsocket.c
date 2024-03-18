@@ -169,8 +169,9 @@ struct slist_client_s *temp;                       // SLIST_FOREACH_SAFE functio
 void cleanup()
 {
     // Gracefully exits when SIGINT or SIGTERM is received, completing any open connection operations, closing any open sockets, and deleting the file /var/tmp/aesdsocketdata
-
+	#ifndef USE_AESD_CHAR_DEVICE
     remove(DATA_FILE);
+    #endif
 
         
     syslog(LOG_INFO, "Caught signal, exiting");               
@@ -241,6 +242,7 @@ void *multithread_handler(void *new_client_node)
     {
         syslog(LOG_ERR,"Error while opening given file; fopen() failure\n"); //syslog error
 		printf("Error! fopen() failure\n"); //prints error
+		perror("");
 		return NULL;
     }
     printf("Opened DATA_FILE: %s\n", DATA_FILE);
@@ -284,7 +286,7 @@ void *multithread_handler(void *new_client_node)
     if ((file_ptr = fopen(DATA_FILE, "r")) == NULL)                               //opens file in read mode and checks if error
 	{
         syslog(LOG_ERR,"Error while opening given file; fopen() failure\n");      //syslog error
-		printf("Error! fopen() failure\n");                                       //prints error
+		printf("Error! fopen() failure in send function\n");                                       //prints error
 		return NULL;
 	}
         
