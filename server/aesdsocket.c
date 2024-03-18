@@ -169,9 +169,9 @@ struct slist_client_s *temp;                       // SLIST_FOREACH_SAFE functio
 void cleanup()
 {
     // Gracefully exits when SIGINT or SIGTERM is received, completing any open connection operations, closing any open sockets, and deleting the file /var/tmp/aesdsocketdata
-    #ifndef USE_AESD_CHAR_DEVICE
-    unlink(DATA_FILE);
-    #endif
+
+    remove(DATA_FILE);
+
         
     syslog(LOG_INFO, "Caught signal, exiting");               
     closelog();
@@ -573,7 +573,7 @@ int main(int argc, char* argv[])
     // Ref: [8] man page, [1] beej guide
     // listen - listen for connections on a socket
     // int listen(int sockfd, int backlog);
-    int backlog = 10; // no of connections allowed on the incoming queue (incoming connections are going to wait in this queue until you accept() them; limit on how many can queue up.
+    int backlog = 1; // no of connections allowed on the incoming queue (incoming connections are going to wait in this queue until you accept() them; limit on how many can queue up.
     rc = listen(sockfd, backlog);
     if (rc == RET_FAILURE)
     {
