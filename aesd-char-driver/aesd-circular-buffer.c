@@ -80,15 +80,17 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 * Any necessary locking must be handled by the caller
 * Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
 */
-void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
+const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
+    const char* ret = NULL;
     // Check input for NULL ptr before dereferencing it
 	if(buffer == NULL)
-    	return;
+    	return ret;
     	
     // Check input for NULL ptr before dereferencing it
 	if(add_entry == NULL)
-    	return;
+    	return ret;
+    	
     
     // 1. Adds entry @param add_entry to @param buffer in the location specified in buffer->in_offs; Structure members of add_entry added to buffer
 
@@ -106,12 +108,14 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     // 2. If the buffer was already full, overwrites the oldest entry and advances buffer->out_offs to the new start location.
     // in_offs = current location in the entry structure where the next write should be stored.
     if (buffer->full)
+    {
+    	ret = buffer->entry[in_offs].buffptr;  //return buffer to free b4 overwrite
         buffer->out_offs = buffer->in_offs;
-        
-    // Check if both indexes match, if so CB full
-    if (buffer->out_offs == buffer->in_offs)  
+    }
+    else if (buffer->out_offs == buffer->in_offs)   // Check if both indexes match, if so CB full
         buffer->full = true; 
-    	
+        
+    return ret;	
 }
 
 /**
