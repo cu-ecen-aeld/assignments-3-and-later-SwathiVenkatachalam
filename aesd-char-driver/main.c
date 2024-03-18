@@ -20,6 +20,9 @@
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
 #include "aesdchar.h"
+
+#include <linux/slab.h>  // For memory allocation functions
+
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
@@ -147,7 +150,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
     	bytes_can_be_read = bytes_to_read_in_entry;   	
     }
     
-    // use copy_to_user to fill buf from kernel to user spce, as we cannot access buf directly
+    // use copy_to_user to fill buf from kernel to user space, as we cannot access buf directly
     // Ref: https://manpages.org/__copy_to_user/9
     // copy_to_user(void __user * to, const void * from, unsigned long n);
     // buf = Destination address, in user space.
@@ -179,8 +182,114 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
      * TODO: handle write
      */
      
-     
-     
+    // Check input parameters validity first
+    // filp - file pointer private_data member used to get aesd_dev
+    // buf - buffer to fill from
+    // f_pos - point to loc where write would start
+    if(filp == NULL || buf == NULL || f_pos == NULL)
+    {
+    	PDEBUG("Input parameters of read function invalid; memory access failure\n");
+        return -EFAULT; // mem access failure error code
+    }
+    
+    // Check input parameters validity first
+	if (count == 0)
+	{
+		PDEBUG("No data to write; return success\n");
+		return 0;
+	}
+		
+	// file pointer filp private_data used to get aesd_dev
+	struct aesd_dev *dev = filp->private_data;
+	
+	// Allocate mem to store write data from user space onto kernel space
+	// Ref: https://manpages.org/kmalloc/9
+	// void * kmalloc(size_t size, gfp_t flags);
+	char *write_data_uspace = kmalloc(count, GFP_KERNEL); //GFP_KERNEL - Allocate normal kernel ram. May sleep.
+	if (write_data_uspace == NULL)
+	{
+		PDEBUG("Kmalloc failure!\n");
+	    mutex_unlock(&dev->lock);  // unlock mutex 
+        return retval;		
+	}
+	
+	int rc; // return code storage variable
+	
+	// Lock for safe multi-threaded op
+	rc = mutex_lock_interruptible(&dev->lock); //  check in rc if lock acquisition interrupted by a signal
+	if (rc != SUCCESS)
+	{
+		PDEBUG("Lock failure in write;  lock acquisition was interrupted by a signal");
+		return -ERESTARTSYS;  //restart syscall code
+	}	
+	
+	// use copy_from_user to fill buf from user to kernel spce, as we cannot access buf directly
+    // Ref: https://manpages.debian.org/testing/linux-manual-4.8/__copy_from_user.9.en.html
+    // copy_from_user(void __user * to, const void * from, unsigned long n);
+    // write_data_uspace = Destination address, in kernel space.
+    // buf = Source address, in user space
+    // count = Number of bytes to copy.
+    rc = copy_to_user(write_data_uspace, buf, count);
+    if (rc)
+    {
+        PDEBUG("Failed to copy from user space buf; exit");
+        mutex_unlock(&dev->lock);  // unlock mutex
+        kfree(write_data_uspace);
+        return -EFAULT;             // return    	
+    }   
+    
+    // Check if CB empty
+	if (dev->write_entry.size == 0)
+	{
+		dev->write_entry.buffptr = kmalloc(count,GFP_KERNEL);
+	}
+	else // if not reallocate mem
+	{
+	    // Ref: https://manpages.org/krealloc/9
+    	// void * krealloc(const void * p, size_t new_size, gfp_t flags);
+    	// dev->write_entry.buffptr = obj to reallocate mem for
+    	// dev->write_entry.size + count = new size
+    	// flag = GFP_KERNEL (Allocate normal kernel ram. May sleep.)
+		dev->write_entry.buffptr = krealloc(dev->write_entry.buffptr, dev->write_entry.size + count, GFP_KERNEL);
+	}
+		
+	// Check mem alloc failure
+	if (dev->write_entry.buffptr == NULL)
+	{ 
+	    PDEBUG("K Alloc failure!\n");
+	    mutex_unlock(&dev->lock);  // unlock mutex 
+	    kfree(write_data_uspace);
+        return retval;
+	}
+	
+	// copy data to write entry, most recent, append
+	// Ref: https://www.man7.org/linux/man-pages/man3/memcpy.3.html
+	// void *memcpy(dest, src, n)
+	void *dest = dev->write_entry.buffptr + dev->write_entry.size;
+    memcpy(dest, write_data_uspace, count);
+    dev->write_entry.size += count;
+    
+    // Check new line char
+    // Ref: https://www.man7.org/linux/man-pages/man3/memchr.3.html
+    // Scan mem for '\n' char
+    void *newline_ptr = memchr(write_data_uspace, '\n', count);
+    if(newline_ptr != NULL)  // Found '\n'
+    {
+        // add to CB(buffer, entry)
+        return_entry = aesd_circular_buffer_add_entry(&dev->buffer, &dev->write_entry);
+        if(return_entry != NULL)  
+    		kfree(return_entry); // free overwritten if failure
+
+        // clear current
+        dev->write_entry.buffptr = NULL;
+        dev->write_entry.size = 0;
+    }
+    
+    retval = count;
+	
+    PDEBUG("Write success!");
+    mutex_unlock(&dev->lock);  // unlock mutex 
+    kfree(write_data_uspace);
     return retval;
 }
 struct file_operations aesd_fops = {
@@ -226,6 +335,8 @@ int aesd_init_module(void)
      
 	mutex_init(&aesd_device.lock);
     aesd_circular_buffer_init(&aesd_device.buffer);
+    aesd_device.write_entry.buffptr = NULL;
+    aesd_device.write_entry.size    = 0;
 
     result = aesd_setup_cdev(&aesd_device);
 
@@ -245,6 +356,19 @@ void aesd_cleanup_module(void)
     /**
      * TODO: cleanup AESD specific poritions here as necessary
      */
+    struct aesd_buffer_entry *entryptr = NULL;
+    int index = 0;
+     /*
+    #define AESD_CIRCULAR_BUFFER_FOREACH(entryptr,buffer,index) \
+    for(index=0, entryptr=&((buffer)->entry[index]); \
+            index<AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; \
+            index++, entryptr=&((buffer)->entry[index]))*/
+            
+    AESD_CIRCULAR_BUFFER_FOREACH(entryptr,&aesd_device.buffer,index) 
+    {
+        kfree(entryptr->buffptr);
+    }
+	mutex_destroy(&aesd_device.lock);
 
     unregister_chrdev_region(devno, 1);
 }
