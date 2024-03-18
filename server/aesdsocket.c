@@ -87,7 +87,7 @@
 
 //#define DATA_FILE                         ("/var/tmp/aesdsocketdata")   // Receives data over the connection and appends to this file 
 
-//#define USE_AESD_CHAR_DEVICE              // comment out of not req
+#define USE_AESD_CHAR_DEVICE              // comment out of not req
 
 #ifdef USE_AESD_CHAR_DEVICE
     #define DATA_FILE                     ("/dev/aesdchar")
@@ -191,6 +191,7 @@ void cleanup()
         free(new_client_node);
     }
     syslog(LOG_INFO, "Program completed successfully!"); 
+    printf("Program completed successfully!"); 
     exit(SUCCESS);
 }
 
@@ -239,9 +240,10 @@ void *multithread_handler(void *new_client_node)
     if ((file_ptr = fopen(DATA_FILE, "a+")) == NULL) //opens file in append and update mode and checks if error
     {
         syslog(LOG_ERR,"Error while opening given file; fopen() failure\n"); //syslog error
-	printf("Error! fopen() failure\n"); //prints error
-	return NULL;
+		printf("Error! fopen() failure\n"); //prints error
+		return NULL;
     }
+    printf("Opened DATA_FILE: %s\n", DATA_FILE);
     char buffer[BUFFER_SIZE];
     	
     while(1)
@@ -256,11 +258,13 @@ void *multithread_handler(void *new_client_node)
 			printf("Error! recv() failure/n");                           //prints error	
 			break;
         }
+        printf("Recv success!\n");
         	
         // Ref: [13] man page
         // Received data written to file
         // size_t fwrite(const void *ptr, size_t size, size_t count, FILE *stream);
         fwrite(buffer, 1, num_bytes, file_ptr);
+        printf("Fwrite success!, received data written to file\n");
         	
         // Ref: [14] man page
         // memchr - Scan memory for a character
@@ -276,7 +280,7 @@ void *multithread_handler(void *new_client_node)
       *                            Send                                       *
       *************************************************************************/ 
     pthread_mutex_lock(&lock);
-    // Returns the full content of /var/tmp/aesdsocketdata to the client as soon as the received data packet completes.
+    // Returns the full content of DATA_FILE to the client as soon as the received data packet completes.
     if ((file_ptr = fopen(DATA_FILE, "r")) == NULL)                               //opens file in read mode and checks if error
 	{
         syslog(LOG_ERR,"Error while opening given file; fopen() failure\n");      //syslog error
