@@ -12,7 +12,6 @@
  * @updated Swathi Venkatachalam
  * @date    2024-03-17
  */
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/printk.h>
@@ -124,7 +123,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
 	
 	// From aesd-circular-buffer.h 
 	// struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer, size_t char_offset, size_t *entry_offset_byte_rtn );
-	data_entry = aesd_circular_buffer_find_entry_offset_for_fpos(&device->buffer, *f_pos, &entry_offset_byte_rtn);
+	data_entry = aesd_circular_buffer_find_entry_offset_for_fpos(&dev->buffer, *f_pos, &entry_offset_byte_rtn);
 	
 	// Check if entry doesn't exist
     if(data_entry == NULL)
@@ -265,8 +264,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
 	// copy data to write entry, most recent, append
 	// Ref: https://www.man7.org/linux/man-pages/man3/memcpy.3.html
 	// void *memcpy(dest, src, n)
-	void *dest = dev->write_entry.buffptr + dev->write_entry.size;
-    memcpy(dest, write_data_uspace, count);
+    memcpy((void *)dev->write_entry.buffptr + dev->write_entry.size, write_data_uspace, count);
     dev->write_entry.size += count;
     
     // Check new line char
@@ -276,7 +274,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     if(newline_ptr != NULL)  // Found '\n'
     {
         // add to CB(buffer, entry)
-        return_entry = aesd_circular_buffer_add_entry(&dev->buffer, &dev->write_entry);
+        const char* return_entry = aesd_circular_buffer_add_entry(&dev->buffer, &dev->write_entry);
         if(return_entry != NULL)  
     		kfree(return_entry); // free overwritten if failure
 
@@ -292,6 +290,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     kfree(write_data_uspace);
     return retval;
 }
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
@@ -335,8 +334,6 @@ int aesd_init_module(void)
      
 	mutex_init(&aesd_device.lock);
     aesd_circular_buffer_init(&aesd_device.buffer);
-    aesd_device.write_entry.buffptr = NULL;
-    aesd_device.write_entry.size    = 0;
 
     result = aesd_setup_cdev(&aesd_device);
 

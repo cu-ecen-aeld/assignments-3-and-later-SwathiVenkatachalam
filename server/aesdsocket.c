@@ -84,7 +84,17 @@
 #define SUCCESS                           (0)
 
 #define PORT                              ("9000")                      // For Opening a stream socket bound to port 9000
-#define DATA_FILE                         ("/var/tmp/aesdsocketdata")   // Receives data over the connection and appends to this file 
+
+//#define DATA_FILE                         ("/var/tmp/aesdsocketdata")   // Receives data over the connection and appends to this file 
+
+#define USE_AESD_CHAR_DEVICE              // comment out of not req
+
+#ifdef USE_AESD_CHAR_DEVICE
+    #define DATA_FILE                     ("/dev/aesdchar")
+#else
+    #define DATA_FILE                     ("/var/tmp/aesdsocketdata")
+#endif
+
 #define BUFFER_SIZE                       (128)
 
 // Ref: [22] man page
@@ -159,7 +169,10 @@ struct slist_client_s *temp;                       // SLIST_FOREACH_SAFE functio
 void cleanup()
 {
     // Gracefully exits when SIGINT or SIGTERM is received, completing any open connection operations, closing any open sockets, and deleting the file /var/tmp/aesdsocketdata
+	#ifndef USE_AESD_CHAR_DEVICE
     remove(DATA_FILE);
+    #endif
+
         
     syslog(LOG_INFO, "Caught signal, exiting");               
     closelog();
@@ -179,6 +192,7 @@ void cleanup()
         free(new_client_node);
     }
     syslog(LOG_INFO, "Program completed successfully!"); 
+    printf("Program completed successfully!"); 
     exit(SUCCESS);
 }
 
@@ -201,7 +215,7 @@ void signalhandler (int signal)
 /*************************************************************************
  *               Time Handler Function                                   *
  *************************************************************************/
- 
+#ifndef USE_AESD_CHAR_DEVICE
 void timehandler(int signal)
 { 
     if (signal == SIGALRM)
@@ -209,6 +223,7 @@ void timehandler(int signal)
         timer_exit = true;
     }   
 }
+#endif
 
 /*************************************************************************
  *                  Multithread_handler Function                         *
@@ -226,9 +241,11 @@ void *multithread_handler(void *new_client_node)
     if ((file_ptr = fopen(DATA_FILE, "a+")) == NULL) //opens file in append and update mode and checks if error
     {
         syslog(LOG_ERR,"Error while opening given file; fopen() failure\n"); //syslog error
-	printf("Error! fopen() failure\n"); //prints error
-	return NULL;
+		printf("Error! fopen() failure\n"); //prints error
+		perror("");
+		return NULL;
     }
+    printf("Opened DATA_FILE: %s\n", DATA_FILE);
     char buffer[BUFFER_SIZE];
     	
     while(1)
@@ -243,11 +260,13 @@ void *multithread_handler(void *new_client_node)
 			printf("Error! recv() failure/n");                           //prints error	
 			break;
         }
+        printf("Recv success!\n");
         	
         // Ref: [13] man page
         // Received data written to file
         // size_t fwrite(const void *ptr, size_t size, size_t count, FILE *stream);
         fwrite(buffer, 1, num_bytes, file_ptr);
+        printf("Fwrite success!, received data written to file\n");
         	
         // Ref: [14] man page
         // memchr - Scan memory for a character
@@ -263,11 +282,11 @@ void *multithread_handler(void *new_client_node)
       *                            Send                                       *
       *************************************************************************/ 
     pthread_mutex_lock(&lock);
-    // Returns the full content of /var/tmp/aesdsocketdata to the client as soon as the received data packet completes.
+    // Returns the full content of DATA_FILE to the client as soon as the received data packet completes.
     if ((file_ptr = fopen(DATA_FILE, "r")) == NULL)                               //opens file in read mode and checks if error
 	{
         syslog(LOG_ERR,"Error while opening given file; fopen() failure\n");      //syslog error
-		printf("Error! fopen() failure\n");                                       //prints error
+		printf("Error! fopen() failure in send function\n");                                       //prints error
 		return NULL;
 	}
         
@@ -295,7 +314,7 @@ void *multithread_handler(void *new_client_node)
 /*************************************************************************
  *                 timestamp_handler Function                         *
  *************************************************************************/
- 
+#ifndef USE_AESD_CHAR_DEVICE
 void *timestamp_handler (void *arg)
 {
     char buffer[BUFFER_SIZE];                                                           // To store formatted time and date
@@ -352,7 +371,7 @@ void *timestamp_handler (void *arg)
     syslog(LOG_INFO,"Success: Timestamp...\n");
     return NULL;
 }
-
+#endif
 /*************************************************************************
  *                       Main Function                                   *
  *************************************************************************/
@@ -368,6 +387,7 @@ int main(int argc, char* argv[])
     // openlog(ident, option, facility)
     openlog(NULL, LOG_PID, LOG_USER);                                                       // Program name, Caller's PID, default LOG_USER - generic user-level messages
     syslog(LOG_INFO,"Success: Starting log...\n");
+    printf("Program starting...\n");
 
     /*************************************************************************
      *                            Daemon mode                                *
@@ -378,7 +398,8 @@ int main(int argc, char* argv[])
      if((argc > 1) && (strcmp(argv[1], "-d") == 0))
      {
      	daemon = 1; 
-     	syslog(LOG_INFO,"Success: Running in daemon mode...\n");     	
+     	syslog(LOG_INFO,"Success: Running in daemon mode...\n"); 
+     	printf("Success: Running in daemon mode...\n");    	
      }
     
     /*************************************************************************
@@ -451,6 +472,7 @@ int main(int argc, char* argv[])
         exit(FAILURE);       
     }
     syslog(LOG_INFO,"Success: getaddrinfo()\n");
+    printf("Success: getaddrinfo()\n");
     
     // Check if addrinfo stored in res from getaddrinfo
     if (res == NULL)
@@ -481,6 +503,7 @@ int main(int argc, char* argv[])
         exit(FAILURE);
     }
     syslog(LOG_INFO,"Success: socket()\n");
+    printf("Success: socket()\n");
     
     // Ref: [6] man page, [1] beej guide
     // setsockopt: set socket options
@@ -496,6 +519,7 @@ int main(int argc, char* argv[])
     	exit(FAILURE);
     }
     syslog(LOG_INFO,"Success: setsockopt()\n");
+    printf("Success: setsockopt()\n");
     
      /*************************************************************************
       *                            Bind                                       *
@@ -509,12 +533,14 @@ int main(int argc, char* argv[])
     {
         syslog(LOG_ERR,"Error binding to the port we passed in to getaddrinfo(); bind() failure\n"); //syslog error
         printf("Error! bind() failure\n");                                                           //prints error
+        perror("");  
         freeaddrinfo(res);
         closelog();
         close(sockfd);
         exit(FAILURE);       
     }
     syslog(LOG_INFO,"Success: bind()\n");
+    printf("Success: bind()\n");
     freeaddrinfo(res);
     
     /*************************************************************************
@@ -549,7 +575,7 @@ int main(int argc, char* argv[])
     // Ref: [8] man page, [1] beej guide
     // listen - listen for connections on a socket
     // int listen(int sockfd, int backlog);
-    int backlog = 10; // no of connections allowed on the incoming queue (incoming connections are going to wait in this queue until you accept() them; limit on how many can queue up.
+    int backlog = 1; // no of connections allowed on the incoming queue (incoming connections are going to wait in this queue until you accept() them; limit on how many can queue up.
     rc = listen(sockfd, backlog);
     if (rc == RET_FAILURE)
     {
@@ -559,6 +585,7 @@ int main(int argc, char* argv[])
         exit(FAILURE);        
     }
     syslog(LOG_INFO,"Success: listen()\n");
+    printf("Success: listen()\n");
 
      /*************************************************************************
       *                          Lock Init                                    *
@@ -577,7 +604,7 @@ int main(int argc, char* argv[])
      /*************************************************************************
       *                          Timestamp                                   *
       *************************************************************************/ 
-   
+   #ifndef USE_AESD_CHAR_DEVICE
     pthread_t timestamp_thread;                       // thread_id
     
     rc = pthread_create(&timestamp_thread,   // Thread ID
@@ -592,6 +619,7 @@ int main(int argc, char* argv[])
         closelog();
         exit(FAILURE);                
     }
+    #endif
 
     // Restarts accepting connections from new clients forever in a loop until SIGINT or SIGTERM is received
     
@@ -602,8 +630,12 @@ int main(int argc, char* argv[])
 	SLIST_FIRST((head)) = NULL;					\
     } while (0) */	
     SLIST_INIT(&head);
+    printf("Entering loop to accept!\n");
+    int debug_count = 0;
     while(!signal_exit)
     {
+      debug_count++;
+      printf("Debug_count = %d\n", debug_count);
      /*************************************************************************
       *                    Accept multiple                                    *
       *************************************************************************/ 
@@ -612,15 +644,17 @@ int main(int argc, char* argv[])
         // accept - accept a connection on a socket
         //int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen); 
         clientaddrlen = sizeof(clientaddr);
+                printf("Before accept\n");
         newfd =  accept(sockfd, (struct sockaddr *)&clientaddr, &clientaddrlen);
         if (newfd == RET_FAILURE)
         {
             syslog(LOG_ERR,"Error accepting a connection on a socket; accept() failure\n"); //syslog error
-            // printf("Error! accept() failure\n"); //prints error
+            printf("Error! accept() failure\n"); //prints error
             closelog();
             exit(FAILURE);       
         }
         syslog(LOG_INFO,"Success: accept()\n");
+        printf("Success: accept()\n");
         
         //Logs message to the syslog “Accepted connection from xxx” where XXXX is the IP address of the connected client. 
         // Ref: [10], [11] man pages
@@ -637,6 +671,7 @@ int main(int argc, char* argv[])
         // Get the IP address as a string
         ip_address = inet_ntoa(clientaddr.sin_addr);
         syslog(LOG_USER,"Accepted connection from %s\n", ip_address);
+        printf("Accepted connection from %s\n", ip_address);
         
         // Ref: [17] sample.c
 		// Singly Linked List    
@@ -671,6 +706,7 @@ int main(int argc, char* argv[])
             exit(FAILURE);                
         }
         syslog(LOG_INFO,"Success: pthread_create()\n");
+        printf("Success: pthread_create()\n");
            
         SLIST_FOREACH_SAFE(new_client_node, &head, entries, temp)
         {
@@ -693,6 +729,7 @@ int main(int argc, char* argv[])
              }
         }  
         // Logs message to the syslog “Closed connection from XXX” where XXX is the IP address of the connected client.
-        syslog(LOG_USER, "Closed connection from %s\n", ip_address);          
+        syslog(LOG_USER, "Closed connection from %s\n", ip_address);  
+         printf("Closed connection from %s\n", ip_address);     
     }
 }
