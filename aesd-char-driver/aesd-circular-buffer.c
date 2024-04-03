@@ -112,10 +112,7 @@ const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, 
     // in_offs = current location in the entry structure where the next write should be stored.
     if (buffer->full)
     {
-<<<<<<< HEAD
     	ret = buffer->entry[buffer->in_offs].buffptr;  //return buffer to free b4 overwrite
-=======
->>>>>>> 4622f9fdf6513eab8055f5b336a3e2756fc80efc
         buffer->out_offs = buffer->in_offs;
     }
     else if (buffer->out_offs == buffer->in_offs)   // Check if both indexes match, if so CB full

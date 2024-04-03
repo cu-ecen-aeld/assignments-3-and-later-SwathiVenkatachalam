@@ -11,6 +11,10 @@
  *
  * @updated Swathi Venkatachalam
  * @date    2024-03-17
+ * @changes Assignment 8
+ *
+ * @date    2024-04-02
+ * @changes Assignment 9
  */
 #include <linux/module.h>
 #include <linux/init.h>
@@ -21,6 +25,8 @@
 #include "aesdchar.h"
 
 #include <linux/slab.h>  // For memory allocation functions
+
+#include "aesd_ioctl.h" // Added for A9
 
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -61,6 +67,185 @@ int aesd_release(struct inode *inode, struct file *filp)
      */
     return 0;
 }
+
+// Ref: Assignment-9-overview lecture slides
+// Ref: https://man7.org/linux/man-pages/man2/lseek.2.html
+
+// off_t lseek(int fd, off_t offset, int whence);
+
+// lseek() repositions file offset of open file description associated with fd to arg offset acc to directive whence as follows:
+// SEEK_SET: File offset is set to offset bytes.
+// SEEK_CUR: File offset is set to its current location plus offset bytes.
+// SEEK_END: File offset is set to the size of the file plus offset bytes.
+
+loff_t aesd_llseek(struct file * filp, loff_t offset, int whence)
+{
+	// file ptr filp->private_data is stored to aesd_dev device struct
+    struct aesd_dev *dev = filp->private_data;
+    
+    // Check input parameters validity first
+    // filp - file pointer private_data member used to get aesd_dev
+    if(filp == NULL)
+    {
+    	PDEBUG("Input parameters of llseek function invalid\n");
+        return -EINVAL;
+    }
+    
+    int rc; // return code storage variable
+	
+	// Lock for safe multi-threaded op
+	rc = mutex_lock_interruptible(&dev->lock); //  check in rc if lock acquisition interrupted by a signal
+	if (rc != SUCCESS)
+	{
+		PDEBUG("Lock failure in llseek;  lock acquisition was interrupted by a signal\n");
+		return -ERESTARTSYS;  //restart syscall code
+	}
+	
+	// Ref: Assignment-9-overview lecture slide 11
+	// total size of all content of the circular buffer
+	struct aesd_buffer_entry *entryptr = NULL;
+    int index = 0;
+    loff_t buffer_size = 0; 
+     /*
+    #define AESD_CIRCULAR_BUFFER_FOREACH(entryptr,buffer,index) \
+    for(index=0, entryptr=&((buffer)->entry[index]); \
+            index<AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; \
+            index++, entryptr=&((buffer)->entry[index]))*/
+            
+    AESD_CIRCULAR_BUFFER_FOREACH(entryptr,&aesd_device.buffer,index) 
+    {
+        buffer_size += entryptr->size;
+    }
+	
+    // new file offset is returned; type loff_t is a 64-bit signed type.
+    loff_t result;
+    
+    // Ref: https://elixir.bootlin.com/linux/v5.3.8/source/fs/read_write.c#L144
+    /**
+     * fixed_size_llseek - llseek implementation for fixed-sized devices
+     * @file:	file structure to seek on
+ 	 * @offset:	file offset to seek to
+ 	 * @whence:	type of seek
+ 	 * @size:	size of the file
+ 	 *
+ 	 */
+ 	 
+ 	 /*
+	loff_t fixed_size_llseek(struct file *file, loff_t offset, int whence, loff_t size)
+	{
+		switch (whence) {
+		case SEEK_SET: case SEEK_CUR: case SEEK_END:
+			return generic_file_llseek_size(file, offset, whence,
+						size, size);
+		default:
+			return -EINVAL;
+		}
+	}*/
+	
+    result = fixed_size_llseek(filp, offset, whence, buffer_size);
+    if(result == -EINVAL) 
+    {
+	    PDEBUG("llseek failure; exit\n"); 
+	    mutex_unlock(&dev->lock); // unlock mutex 
+	    return -EINVAL;
+    }
+    
+    filp->f_pos = result; // Update file position
+    
+    PDEBUG("llseek success!\n");
+    mutex_unlock(&dev->lock); // unlock mutex 
+    
+    return result;
+}
+
+// Adjusting the file offset from ioctl
+// Ref:  Assignment-9-overview lecture slide 18
+static long aesd_adjust_file_offset (struct file *filp, unsigned int write_cmd, unsigned int write_cmd_offset)
+{
+	struct aesd_dev *dev; // device information
+	dev = filp->private_data;
+	
+    int rc; // return code storage variable
+	
+	// Lock for safe multi-threaded op
+	rc = mutex_lock_interruptible(&dev->lock); //  check in rc if lock acquisition interrupted by a signal
+	if (rc != SUCCESS)
+	{
+		PDEBUG("Lock failure in adjust file offset;  lock acquisition was interrupted by a signal\n");
+		return -ERESTARTSYS;  //restart syscall code
+	}
+	
+	// Check for valid write_cmd and write_cmd_offset values
+	// out of range cmd (11); write_cmd_offset is >= size of command
+	if((write_cmd > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) || (write_cmd_offset >= dev->buffer.entry[write_cmd].size))
+    {
+        PDEBUG("Invaid write_cmd, write_cmd_offset values\n");
+        mutex_unlock(&dev->lock); //unlock mutex
+        return -EINVAL;
+    }
+    
+    // Calculate the start offset to write_cmd; Add length of each write between the output pointer and write_cmd
+    size_t start_offset = 0;
+	for(int i = 0; i < write_cmd; i++)
+    {
+        start_offset += dev->buffer.entry[i].size;
+    }
+    
+
+    mutex_unlock(&dev->lock); // unlock mutex 
+    
+    // Add the write_cmd_offset
+    // Save as filp->f_pos
+    filp->f_pos = start_offset + write_cmd_offset;
+    
+    
+    PDEBUG("adjust file offset success!\n");
+    return 0;
+}
+
+// Ref: Assignment-9-overview lecture slides
+// Ref: https://lwn.net/Articles/119652/
+//long (*unlocked_ioctl) (struct file *filp, unsigned int cmd, unsigned long arg);
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    long retval = 0;
+    
+    // Check input parameters validity first
+    // filp - file pointer private_data member used to get aesd_dev
+    if(filp == NULL)
+    {
+    	PDEBUG("Input parameters of ioctl function invalid\n");
+        return -EINVAL;
+    }
+    
+    // Ref: https://github.com/cu-ecen-aeld/aesd-assignments/blob/assignment9/aesd-char-driver/aesd_ioctl.h
+    // A structure to be passed by IOCTL from user space to kernel space, describing the type of seek performed on the aesdchar driver
+    
+    // Ref: Assignment-9-overview lecture slide 17
+    struct aesd_seekto seekto;
+    switch (cmd)
+	{
+		case AESDCHAR_IOCSEEKTO:
+    		if(copy_from_user(&seekto, (const void __user *) arg, sizeof(seekto)) != 0)
+    		{
+        		retval = -EFAULT;
+    		}
+    		else
+    		{
+        		retval = aesd_adjust_file_offset( filp, seekto.write_cmd, seekto.write_cmd_offset );
+    		}
+    		break;
+    		
+    	default:
+    		PDEBUG("Invalid\n");
+    		retval = -ENOTTY;
+    		break;
+    }
+    
+    PDEBUG("ioctl success!\n");
+    return retval;
+}
+
 
 // Ref: Assignment-8-overview lecture slides
 /*
@@ -288,6 +473,9 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     PDEBUG("Write success!");
     mutex_unlock(&dev->lock);  // unlock mutex 
     kfree(write_data_uspace);
+    
+    *f_pos += retval; // advance the pointer by the number of bytes written
+    
     return retval;
 }
 
@@ -297,6 +485,10 @@ struct file_operations aesd_fops = {
     .write =    aesd_write,
     .open =     aesd_open,
     .release =  aesd_release,
+    
+    // Added for A9
+    .llseek         = aesd_llseek,
+    .unlocked_ioctl = aesd_ioctl,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
