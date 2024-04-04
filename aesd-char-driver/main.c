@@ -41,10 +41,6 @@ struct aesd_dev aesd_device;
 int aesd_open(struct inode *inode, struct file *filp)
 {
     PDEBUG("open");
-    /**
-     * TODO: handle open
-     */
-     
     // Ref: From my A7 scull_open function https://github.com/cu-ecen-aeld/assignment-7-SwathiVenkatachalam/blob/master/scull/main.c
     struct aesd_dev *dev; // device information
     
@@ -62,9 +58,7 @@ int aesd_open(struct inode *inode, struct file *filp)
 int aesd_release(struct inode *inode, struct file *filp)
 {
     PDEBUG("release");
-    /**
-     * TODO: handle release
-     */
+    filp->private_data = NULL;
     return 0;
 }
 
@@ -100,6 +94,7 @@ loff_t aesd_llseek(struct file * filp, loff_t offset, int whence)
 		PDEBUG("Lock failure in llseek;  lock acquisition was interrupted by a signal\n");
 		return -ERESTARTSYS;  //restart syscall code
 	}
+	printk("Locked for aesd_llseek function\n\n");
 	
 	// Ref: Assignment-9-overview lecture slide 11
 	// total size of all content of the circular buffer
@@ -154,6 +149,7 @@ loff_t aesd_llseek(struct file * filp, loff_t offset, int whence)
     
     PDEBUG("llseek success!\n");
     mutex_unlock(&dev->lock); // unlock mutex 
+    printk("Unlocked after aesd_llseek function\n\n");
     
     return result;
 }
@@ -162,8 +158,7 @@ loff_t aesd_llseek(struct file * filp, loff_t offset, int whence)
 // Ref:  Assignment-9-overview lecture slide 18
 static long aesd_adjust_file_offset (struct file *filp, unsigned int write_cmd, unsigned int write_cmd_offset)
 {
-	struct aesd_dev *dev; // device information
-	dev = filp->private_data;
+	struct aesd_dev *dev = filp->private_data;
 	
     int rc; // return code storage variable
 	
@@ -177,6 +172,18 @@ static long aesd_adjust_file_offset (struct file *filp, unsigned int write_cmd, 
 	
 	// Check for valid write_cmd and write_cmd_offset values
 	// out of range cmd (11); write_cmd_offset is >= size of command
+	/*
+	if(write_cmd > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+	{	
+		return -EINVAL;
+	}
+
+	if(write_cmd_offset >= dev->buffer.entry[write_cmd].size)
+	{
+		printk("Offset not within the range of the buffer size \n");	
+		return -EINVAL;
+	}*/
+	
 	if((write_cmd > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) || (write_cmd_offset >= dev->buffer.entry[write_cmd].size))
     {
         PDEBUG("Invaid write_cmd, write_cmd_offset values\n");
@@ -208,7 +215,7 @@ static long aesd_adjust_file_offset (struct file *filp, unsigned int write_cmd, 
 //long (*unlocked_ioctl) (struct file *filp, unsigned int cmd, unsigned long arg);
 long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-    long retval = 0;
+    ssize_t retval = 0;
     
     // Check input parameters validity first
     // filp - file pointer private_data member used to get aesd_dev
@@ -223,23 +230,23 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     
     // Ref: Assignment-9-overview lecture slide 17
     struct aesd_seekto seekto;
-    switch (cmd)
+    //switch (cmd)
 	{
-		case AESDCHAR_IOCSEEKTO:
+		//case AESDCHAR_IOCSEEKTO:
     		if(copy_from_user(&seekto, (const void __user *) arg, sizeof(seekto)) != 0)
     		{
         		retval = -EFAULT;
     		}
     		else
     		{
-        		retval = aesd_adjust_file_offset( filp, seekto.write_cmd, seekto.write_cmd_offset );
+        		retval = aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
     		}
-    		break;
+    		//break;
     		
-    	default:
-    		PDEBUG("Invalid\n");
-    		retval = -ENOTTY;
-    		break;
+    	//default:
+    		//PDEBUG("Invalid\n");
+    		//retval = -ENOTTY;
+    		//break;
     }
     
     PDEBUG("ioctl success!\n");
@@ -556,6 +563,8 @@ void aesd_cleanup_module(void)
     AESD_CIRCULAR_BUFFER_FOREACH(entryptr,&aesd_device.buffer,index) 
     {
         kfree(entryptr->buffptr);
+        entryptr->buffptr = NULL;
+        entryptr->size = 0;
     }
 	mutex_destroy(&aesd_device.lock);
 
