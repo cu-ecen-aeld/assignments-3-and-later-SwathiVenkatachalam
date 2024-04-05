@@ -11,6 +11,10 @@
  *
  * @updated Swathi Venkatachalam
  * @date    2024-03-17
+ * @changes Assignment 8
+ *
+ * @date    2024-04-02
+ * @changes Assignment 9
  */
 #include <linux/module.h>
 #include <linux/init.h>
@@ -21,6 +25,8 @@
 #include "aesdchar.h"
 
 #include <linux/slab.h>  // For memory allocation functions
+
+#include "aesd_ioctl.h" // Added for A9
 
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -34,13 +40,9 @@ struct aesd_dev aesd_device;
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
+    struct aesd_dev *dev = NULL; // device information
     PDEBUG("open");
-    /**
-     * TODO: handle open
-     */
-     
     // Ref: From my A7 scull_open function https://github.com/cu-ecen-aeld/assignment-7-SwathiVenkatachalam/blob/master/scull/main.c
-    struct aesd_dev *dev; // device information
     
     // Ref: https://radek.io/2012/11/10/magical-container_of-macro/
     // container_of(ptr, type, member) macro 
@@ -56,11 +58,204 @@ int aesd_open(struct inode *inode, struct file *filp)
 int aesd_release(struct inode *inode, struct file *filp)
 {
     PDEBUG("release");
-    /**
-     * TODO: handle release
-     */
+    filp->private_data = NULL;
     return 0;
 }
+
+// Ref: Assignment-9-overview lecture slides
+// Ref: https://man7.org/linux/man-pages/man2/lseek.2.html
+
+// off_t lseek(int fd, off_t offset, int whence);
+
+// lseek() repositions file offset of open file description associated with fd to arg offset acc to directive whence as follows:
+// SEEK_SET: File offset is set to offset bytes.
+// SEEK_CUR: File offset is set to its current location plus offset bytes.
+// SEEK_END: File offset is set to the size of the file plus offset bytes.
+
+loff_t aesd_llseek(struct file * filp, loff_t offset, int whence)
+{
+    int rc = 0; // return code storage variable
+    
+    struct aesd_buffer_entry *entryptr = NULL;
+    int index = 0;
+    loff_t buffer_size = 0; 
+    // new file offset is returned; type loff_t is a 64-bit signed type.
+    loff_t result = 0;
+    
+	// file ptr filp->private_data is stored to aesd_dev device struct
+    struct aesd_dev *dev = NULL;
+    dev = filp->private_data;    
+    
+    // Check input parameters validity first
+    // filp - file pointer private_data member used to get aesd_dev
+    if(filp == NULL)
+    {
+    	PDEBUG("Input parameters of llseek function invalid\n");
+        return -EINVAL;
+    }
+	
+	// Lock for safe multi-threaded op
+	rc = mutex_lock_interruptible(&dev->lock); //  check in rc if lock acquisition interrupted by a signal
+	if (rc != SUCCESS)
+	{
+		PDEBUG("Lock failure in llseek;  lock acquisition was interrupted by a signal\n");
+		return -ERESTARTSYS;  //restart syscall code
+	}
+	printk("Locked for aesd_llseek function\n\n");
+	
+	// Ref: Assignment-9-overview lecture slide 11
+	// total size of all content of the circular buffer
+     /*
+    #define AESD_CIRCULAR_BUFFER_FOREACH(entryptr,buffer,index) \
+    for(index=0, entryptr=&((buffer)->entry[index]); \
+            index<AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; \
+            index++, entryptr=&((buffer)->entry[index]))*/
+            
+    AESD_CIRCULAR_BUFFER_FOREACH(entryptr,&aesd_device.buffer,index) 
+    {
+        buffer_size += entryptr->size;
+    }
+    
+    // Ref: https://elixir.bootlin.com/linux/v5.3.8/source/fs/read_write.c#L144
+    /**
+     * fixed_size_llseek - llseek implementation for fixed-sized devices
+     * @file:	file structure to seek on
+ 	 * @offset:	file offset to seek to
+ 	 * @whence:	type of seek
+ 	 * @size:	size of the file
+ 	 *
+ 	 */
+ 	 
+ 	 /*
+	loff_t fixed_size_llseek(struct file *file, loff_t offset, int whence, loff_t size)
+	{
+		switch (whence) {
+		case SEEK_SET: case SEEK_CUR: case SEEK_END:
+			return generic_file_llseek_size(file, offset, whence,
+						size, size);
+		default:
+			return -EINVAL;
+		}
+	}*/
+	
+    result = fixed_size_llseek(filp, offset, whence, buffer_size);
+    if(result == -EINVAL) 
+    {
+	    PDEBUG("llseek failure; exit\n"); 
+	    mutex_unlock(&dev->lock); // unlock mutex 
+	    return -EINVAL;
+    }
+    
+    filp->f_pos = result; // Update file position
+    
+    PDEBUG("llseek success!\n");
+    mutex_unlock(&dev->lock); // unlock mutex 
+    printk("Unlocked after aesd_llseek function\n\n");
+    
+    return result;
+}
+
+// Adjusting the file offset from ioctl
+// Ref:  Assignment-9-overview lecture slide 18
+static long aesd_adjust_file_offset (struct file *filp, unsigned int write_cmd, unsigned int write_cmd_offset)
+{
+    size_t start_offset = 0;
+    int i = 0;
+	struct aesd_dev *dev = filp->private_data;
+    int rc; // return code storage variable
+	
+	// Lock for safe multi-threaded op
+	rc = mutex_lock_interruptible(&dev->lock); //  check in rc if lock acquisition interrupted by a signal
+	if (rc != SUCCESS)
+	{
+		PDEBUG("Lock failure in adjust file offset;  lock acquisition was interrupted by a signal\n");
+		return -ERESTARTSYS;  //restart syscall code
+	}
+	
+	// Check for valid write_cmd and write_cmd_offset values
+	// out of range cmd (11); write_cmd_offset is >= size of command
+	/*
+	if(write_cmd > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+	{	
+		return -EINVAL;
+	}
+
+	if(write_cmd_offset >= dev->buffer.entry[write_cmd].size)
+	{
+		printk("Offset not within the range of the buffer size \n");	
+		return -EINVAL;
+	}*/
+	
+	if((write_cmd > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) || (write_cmd_offset >= dev->buffer.entry[write_cmd].size))
+    {
+        PDEBUG("Invaid write_cmd, write_cmd_offset values\n");
+        mutex_unlock(&dev->lock); //unlock mutex
+        return -EINVAL;
+    }
+    
+    // Calculate the start offset to write_cmd; Add length of each write between the output pointer and write_cmd
+
+	for(i = 0; i < write_cmd; i++)
+    {
+        start_offset += dev->buffer.entry[i].size;
+    }
+    
+
+    mutex_unlock(&dev->lock); // unlock mutex 
+    
+    // Add the write_cmd_offset
+    // Save as filp->f_pos
+    filp->f_pos = start_offset + write_cmd_offset;
+    
+    
+    PDEBUG("adjust file offset success!\n");
+    return 0;
+}
+
+// Ref: Assignment-9-overview lecture slides
+// Ref: https://lwn.net/Articles/119652/
+//long (*unlocked_ioctl) (struct file *filp, unsigned int cmd, unsigned long arg);
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    ssize_t retval = 0;
+    struct aesd_seekto seekto;
+    
+    // Check input parameters validity first
+    // filp - file pointer private_data member used to get aesd_dev
+    if(filp == NULL)
+    {
+    	PDEBUG("Input parameters of ioctl function invalid\n");
+        return -EINVAL;
+    }
+    
+    // Ref: https://github.com/cu-ecen-aeld/aesd-assignments/blob/assignment9/aesd-char-driver/aesd_ioctl.h
+    // A structure to be passed by IOCTL from user space to kernel space, describing the type of seek performed on the aesdchar driver
+    
+    // Ref: Assignment-9-overview lecture slide 17
+
+    //switch (cmd)
+	{
+		//case AESDCHAR_IOCSEEKTO:
+    		if(copy_from_user(&seekto, (const void __user *) arg, sizeof(seekto)) != 0)
+    		{
+        		retval = -EFAULT;
+    		}
+    		else
+    		{
+        		retval = aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
+    		}
+    		//break;
+    		
+    	//default:
+    		//PDEBUG("Invalid\n");
+    		//retval = -ENOTTY;
+    		//break;
+    }
+    
+    PDEBUG("ioctl success!\n");
+    return retval;
+}
+
 
 // Ref: Assignment-8-overview lecture slides
 /*
@@ -81,7 +276,15 @@ Steps to read data from kernel space to user space buf
 
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
+	int rc; // return code storage variable
     ssize_t retval = 0;
+    struct aesd_dev *dev = NULL;
+    
+    size_t entry_offset_byte_rtn = 0; // contains offset
+	struct aesd_buffer_entry *data_entry = NULL; // initialize to get data entry in CB
+	
+	size_t bytes_to_read_in_entry = 0;
+    size_t bytes_can_be_read = 0;
     PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
     /**
      * TODO: handle read
@@ -106,9 +309,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
 	}
 		
 	// file pointer filp private_data used to get aesd_dev
-	struct aesd_dev *dev = filp->private_data;
-	
-	int rc; // return code storage variable
+	dev = filp->private_data;
 	
 	// Lock for safe multi-threaded op
 	rc = mutex_lock_interruptible(&dev->lock); //  check in rc if lock acquisition interrupted by a signal
@@ -118,8 +319,6 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
 		return -ERESTARTSYS;  //restart syscall code
 	}
 	
-	size_t entry_offset_byte_rtn = 0; // contains offset
-	struct aesd_buffer_entry *data_entry = NULL; // initialize to get data entry in CB
 	
 	// From aesd-circular-buffer.h 
 	// struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer, size_t char_offset, size_t *entry_offset_byte_rtn );
@@ -133,8 +332,8 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
         return retval;             // return
     }
     
-    size_t bytes_to_read_in_entry = data_entry->size - entry_offset_byte_rtn;
-    size_t bytes_can_be_read = 0;
+    bytes_to_read_in_entry = data_entry->size - entry_offset_byte_rtn;
+    bytes_can_be_read = 0;
     
     // If bytes to read exceeds max allowed count, can only read till count; considering partial read possibility
     if (bytes_to_read_in_entry > count)
@@ -175,7 +374,11 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
 // Write data from user space buf to device in kernel space
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
+    char *newline_ptr = NULL;
     ssize_t retval = -ENOMEM;
+    struct aesd_dev *dev = NULL;
+    	int rc; // return code storage variable
+    	
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
     /**
      * TODO: handle write
@@ -199,7 +402,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
 	}
 		
 	// file pointer filp private_data used to get aesd_dev
-	struct aesd_dev *dev = filp->private_data;
+	dev = filp->private_data;
 	
 	// Allocate mem to store write data from user space onto kernel space
 	// Ref: https://manpages.org/kmalloc/9
@@ -211,8 +414,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
 	    mutex_unlock(&dev->lock);  // unlock mutex 
         return retval;		
 	}
-	
-	int rc; // return code storage variable
+
 	
 	// Lock for safe multi-threaded op
 	rc = mutex_lock_interruptible(&dev->lock); //  check in rc if lock acquisition interrupted by a signal
@@ -270,7 +472,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     // Check new line char
     // Ref: https://www.man7.org/linux/man-pages/man3/memchr.3.html
     // Scan mem for '\n' char
-    void *newline_ptr = memchr(write_data_uspace, '\n', count);
+    newline_ptr = memchr(write_data_uspace, '\n', count);
     if(newline_ptr != NULL)  // Found '\n'
     {
         // add to CB(buffer, entry)
@@ -288,6 +490,9 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     PDEBUG("Write success!");
     mutex_unlock(&dev->lock);  // unlock mutex 
     kfree(write_data_uspace);
+    
+    *f_pos += retval; // advance the pointer by the number of bytes written
+    
     return retval;
 }
 
@@ -297,6 +502,10 @@ struct file_operations aesd_fops = {
     .write =    aesd_write,
     .open =     aesd_open,
     .release =  aesd_release,
+    
+    // Added for A9
+    .llseek         = aesd_llseek,
+    .unlocked_ioctl = aesd_ioctl,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
@@ -346,6 +555,9 @@ int aesd_init_module(void)
 
 void aesd_cleanup_module(void)
 {
+    struct aesd_buffer_entry *entryptr = NULL;
+    int index = 0;
+    
     dev_t devno = MKDEV(aesd_major, aesd_minor);
 
     cdev_del(&aesd_device.cdev);
@@ -353,8 +565,6 @@ void aesd_cleanup_module(void)
     /**
      * TODO: cleanup AESD specific poritions here as necessary
      */
-    struct aesd_buffer_entry *entryptr = NULL;
-    int index = 0;
      /*
     #define AESD_CIRCULAR_BUFFER_FOREACH(entryptr,buffer,index) \
     for(index=0, entryptr=&((buffer)->entry[index]); \
@@ -364,6 +574,8 @@ void aesd_cleanup_module(void)
     AESD_CIRCULAR_BUFFER_FOREACH(entryptr,&aesd_device.buffer,index) 
     {
         kfree(entryptr->buffptr);
+        entryptr->buffptr = NULL;
+        entryptr->size = 0;
     }
 	mutex_destroy(&aesd_device.lock);
 

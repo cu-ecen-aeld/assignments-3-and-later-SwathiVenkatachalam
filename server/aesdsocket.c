@@ -50,7 +50,8 @@
  *
  * Update     : Assignment 6 Part 1 
  * Description:  15) Multiple connections are accepted simultaneously using pthread and content is written to DATA_FILE, logged every 10 secs utilizing locks
- *              
+ * Update      : Assignment 7, 8, 9             
+ * 
  */
 
 /*************************************************************************
@@ -75,6 +76,9 @@
 #include <pthread.h>                             // POSIX threads library
 #include <stdbool.h>                             // POSIX threads library
 
+#include "../aesd-char-driver/aesd_ioctl.h"      // Added for A9
+#include <fcntl.h>                               // For file ops
+
 /*************************************************************************
  *                            Macros                                     *
  *************************************************************************/
@@ -95,10 +99,13 @@
     #define DATA_FILE                     ("/var/tmp/aesdsocketdata")
 #endif
 
-#define BUFFER_SIZE                       (128)
+#define BUFFER_SIZE                       (1024)
 
 // Ref: [22] man page
 #define RFC2822_compliant_strftime_format ("%a, %d %b %Y %T %z\n")
+
+#define IOCTL_STRING                      ("AESDCHAR_IOCSEEKTO:")
+#define IOCTL_STRING_LENGTH               (19)
 
 /*************************************************************************
  *                  Global Variables                                     *
@@ -236,77 +243,116 @@ void *multithread_handler(void *new_client_node)
 	/*************************************************************************
      *                            Receive                                    *
      *************************************************************************/ 
-    pthread_mutex_lock(&lock);
-    // Receives data over the connection and appends to file /var/tmp/aesdsocketdata, creating this file if it doesn’t exist.
-    if ((file_ptr = fopen(DATA_FILE, "a+")) == NULL) //opens file in append and update mode and checks if error
+     int fd;
+    // Receives data over the connection and appends to file 
+    
+    //if ((file_ptr = fopen(DATA_FILE, "a+")) == NULL) //opens file in append and update mode and checks if error
+    if ((fd = open(DATA_FILE, O_CREAT | O_RDWR | O_APPEND, 0744)) == -1) //opens file checks if error
     {
         syslog(LOG_ERR,"Error while opening given file; fopen() failure\n"); //syslog error
 		printf("Error! fopen() failure\n"); //prints error
 		perror("");
+		pthread_mutex_unlock(&lock);
+		close(thread_param->newfd);
+        thread_param->thread_completion_flag = 1;
 		return NULL;
     }
-    printf("Opened DATA_FILE: %s\n", DATA_FILE);
+    printf("Opened DATA_FILE: %s for receive\n", DATA_FILE);
     char buffer[BUFFER_SIZE];
-    	
-    while(1)
+    struct aesd_seekto seekto;
+    off_t offset;
+    
+ 	int num_bytes;
+ 	unsigned int write_cmd, write_cmd_offset;
+
+    // Ref: [12] man page
+    // receive - returns the number of bytes actually read into the buffer
+    // int recv(int sockfd, void *buf, int len, int flags);
+    while ((num_bytes = recv( thread_param->newfd, buffer, sizeof( buffer), 0)) > 0)
     {
-        // Ref: [12] man page
-        // receive - returns the number of bytes actually read into the buffer
-        // int recv(int sockfd, void *buf, int len, int flags);
-        int num_bytes = recv(thread_param->newfd, buffer, sizeof(buffer), 0); // Receive data from the newfd socket into the buffer. It reads up to sizeof(buffer) bytes at a time.
-        if (num_bytes == RET_FAILURE)
-        {
-        	syslog(LOG_ERR,"Error while receiving; recv() failure\n"); //syslog error
-			printf("Error! recv() failure/n");                           //prints error	
-			break;
+    	printf("Recv success!\n");
+        pthread_mutex_lock(&lock);
+        
+        // ioctl check
+    	// int strncmp(const char s1[.n], const char s2[.n], size_t n);
+    	if ((strncmp(buffer, IOCTL_STRING, IOCTL_STRING_LENGTH )) == SUCCESS)
+    	{
+            sscanf(buffer, "AESDCHAR_IOCSEEKTO:%u,%u", &write_cmd, &write_cmd_offset);
+            seekto.write_cmd = write_cmd;
+            seekto.write_cmd_offset = write_cmd_offset;
+
+    		if(ioctl(fd, AESDCHAR_IOCSEEKTO, &seekto) == -1)
+        	{
+        		syslog(LOG_ERR,"Error while ioctl; ioctl failure\n"); //syslog error
+				printf("Error! ioctl() failure\n"); //prints error
+				pthread_mutex_unlock(&lock);
+				perror("");
+				return NULL;
+        	}
+        	printf("IOCTL success!\n");
+            offset = lseek(fd, 0, SEEK_CUR);
         }
-        printf("Recv success!\n");
+        else
+        {
+    	    // Ref: [13] man page
+        	// Received data written to file
+        	// size_t fwrite(const void *ptr, size_t size, size_t count, FILE *stream);
+        	write(fd, buffer, num_bytes);
+        	printf("Write success!, received data written to file\n");
         	
-        // Ref: [13] man page
-        // Received data written to file
-        // size_t fwrite(const void *ptr, size_t size, size_t count, FILE *stream);
-        fwrite(buffer, 1, num_bytes, file_ptr);
-        printf("Fwrite success!, received data written to file\n");
+        	offset = -1; // flag write occured
         	
+        	close(fd);    
+    		printf("Closed DATA_FILE: %s after receive\n", DATA_FILE); 
+        }
+
+        pthread_mutex_unlock(&lock);
+        printf("Unlocked after receive!\n");
+
         // Ref: [14] man page
         // memchr - Scan memory for a character
         // void *memchr(const void s[.n], int c, size_t n);
         if (memchr(buffer, '\n', num_bytes) != NULL) // check '\n' in the received data. If so break out of loop, indicating end of a data packet
+        {
+            printf("NULL detected; end of packet!\n");
             break;
+        }
     }
-        
-    fclose(file_ptr);       
-    pthread_mutex_unlock(&lock);
-        
      /*************************************************************************
       *                            Send                                       *
       *************************************************************************/ 
     pthread_mutex_lock(&lock);
+    printf("Locked for send!\n");
+    
     // Returns the full content of DATA_FILE to the client as soon as the received data packet completes.
-    if ((file_ptr = fopen(DATA_FILE, "r")) == NULL)                               //opens file in read mode and checks if error
-	{
+    if (offset == -1 && (fd = open(DATA_FILE, O_RDWR)) == -1)  //opens file in read mode and checks if error
+    {
         syslog(LOG_ERR,"Error while opening given file; fopen() failure\n");      //syslog error
 		printf("Error! fopen() failure in send function\n");                                       //prints error
+		pthread_mutex_unlock(&lock);
+        thread_param->thread_completion_flag = 1;
 		return NULL;
-	}
-        
-    while (!feof(file_ptr))
+    }
+    printf("Opened DATA_FILE: %s for send\n", DATA_FILE);
+       
+    // Ref: [15] man page
+    // Reads data from file
+    // ssize_t read(int fd, void buf[.count], size_t count); 
+    ssize_t read_bytes;
+    while ((read_bytes = read(fd, buffer, sizeof(buffer))) > 0)
     {
-    	// Ref: [15] man page
-        // Reads data from file
-        // size_t fread(const void *ptr, size_t nmemb, size_t count, FILE *stream);
-        ssize_t read_bytes = fread(buffer, 1, sizeof(buffer), file_ptr);
-        if (read_bytes <= 0) 
-            break;
-
         // Ref: [16] man page
         // Returns data to client newfd
         // ssize_t send(int sockfd, const void buf[.len], size_t len, int flags);
         send(thread_param->newfd, buffer, read_bytes, 0);
     }
-    	
-    fclose(file_ptr); 
+    printf("Send success!\n");
+	   
+    close(thread_param->newfd);
+    close(fd); 
+    printf("Closed DATA_FILE: %s after send\n", DATA_FILE); 
     pthread_mutex_unlock(&lock);
+    printf("Unlocked after send!\n");
     thread_param->thread_completion_flag = 1;
     return NULL;
 }
