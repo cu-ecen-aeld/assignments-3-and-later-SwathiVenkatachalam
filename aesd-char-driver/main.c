@@ -79,7 +79,7 @@ loff_t aesd_llseek(struct file * filp, loff_t offset, int whence)
     struct aesd_buffer_entry *entryptr = NULL;
     int index = 0;
     loff_t buffer_size = 0; 
-        // new file offset is returned; type loff_t is a 64-bit signed type.
+    // new file offset is returned; type loff_t is a 64-bit signed type.
     loff_t result = 0;
     
 	// file ptr filp->private_data is stored to aesd_dev device struct
@@ -162,8 +162,6 @@ static long aesd_adjust_file_offset (struct file *filp, unsigned int write_cmd, 
     size_t start_offset = 0;
     int i = 0;
 	struct aesd_dev *dev = filp->private_data;
-	
-	
     int rc; // return code storage variable
 	
 	// Lock for safe multi-threaded op

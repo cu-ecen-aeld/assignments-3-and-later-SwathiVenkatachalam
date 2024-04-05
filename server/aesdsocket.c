@@ -243,9 +243,7 @@ void *multithread_handler(void *new_client_node)
      *                            Receive                                    *
      *************************************************************************/ 
      int fd;
-    //pthread_mutex_lock(&lock);
-    //printf("Locked for receive!\n");
-    // Receives data over the connection and appends to file /var/tmp/aesdsocketdata, creating this file if it doesn’t exist.
+    // Receives data over the connection and appends to file 
     
     //if ((file_ptr = fopen(DATA_FILE, "a+")) == NULL) //opens file in append and update mode and checks if error
     if ((fd = open(DATA_FILE, O_CREAT | O_RDWR | O_APPEND, 0744)) == -1) //opens file checks if error
@@ -264,21 +262,21 @@ void *multithread_handler(void *new_client_node)
     off_t offset;
     
  	int num_bytes;
+ 	unsigned int write_cmd, write_cmd_offset;
 
     // Ref: [12] man page
     // receive - returns the number of bytes actually read into the buffer
     // int recv(int sockfd, void *buf, int len, int flags);
-    while ((num_bytes  = recv( thread_param->newfd, buffer, sizeof( buffer), 0)) > 0)
+    while ((num_bytes = recv( thread_param->newfd, buffer, sizeof( buffer), 0)) > 0)
     {
     	printf("Recv success!\n");
         pthread_mutex_lock(&lock);
         
         // ioctl check
     	// int strncmp(const char s1[.n], const char s2[.n], size_t n);
-    	if ((strncmp( buffer, "AESDCHAR_IOCSEEKTO:", 19 )) == SUCCESS)
+    	if ((strncmp(buffer, IOCTL_STRING, IOCTL_STRING_LENGTH )) == SUCCESS)
     	{
-            unsigned int write_cmd, write_cmd_offset;
-            sscanf( buffer + 19, "%u,%u", &write_cmd, &write_cmd_offset );
+            sscanf(buffer, "AESDCHAR_IOCSEEKTO:%u,%u", &write_cmd, &write_cmd_offset);
             seekto.write_cmd = write_cmd;
             seekto.write_cmd_offset = write_cmd_offset;
 
@@ -291,7 +289,7 @@ void *multithread_handler(void *new_client_node)
 				return NULL;
         	}
         	printf("IOCTL success!\n");
-            offset = lseek( fd, 0, SEEK_CUR );
+            offset = lseek(fd, 0, SEEK_CUR);
         }
         else
         {
