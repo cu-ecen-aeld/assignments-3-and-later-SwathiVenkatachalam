@@ -40,9 +40,9 @@ struct aesd_dev aesd_device;
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
+    struct aesd_dev *dev = NULL; // device information
     PDEBUG("open");
     // Ref: From my A7 scull_open function https://github.com/cu-ecen-aeld/assignment-7-SwathiVenkatachalam/blob/master/scull/main.c
-    struct aesd_dev *dev = NULL; // device information
     
     // Ref: https://radek.io/2012/11/10/magical-container_of-macro/
     // container_of(ptr, type, member) macro 
@@ -79,13 +79,13 @@ loff_t aesd_llseek(struct file * filp, loff_t offset, int whence)
     struct aesd_buffer_entry *entryptr = NULL;
     int index = 0;
     loff_t buffer_size = 0; 
+        // new file offset is returned; type loff_t is a 64-bit signed type.
+    loff_t result = 0;
     
 	// file ptr filp->private_data is stored to aesd_dev device struct
     struct aesd_dev *dev = NULL;
     dev = filp->private_data;    
     
-    // new file offset is returned; type loff_t is a 64-bit signed type.
-    loff_t result = 0;
     // Check input parameters validity first
     // filp - file pointer private_data member used to get aesd_dev
     if(filp == NULL)
@@ -376,8 +376,9 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
 // Write data from user space buf to device in kernel space
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
-    void *newline_ptr = NULL;
+    char *newline_ptr = NULL;
     ssize_t retval = -ENOMEM;
+    struct aesd_dev *dev = NULL;
     	int rc; // return code storage variable
     	
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
@@ -403,7 +404,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
 	}
 		
 	// file pointer filp private_data used to get aesd_dev
-	struct aesd_dev *dev = filp->private_data;
+	dev = filp->private_data;
 	
 	// Allocate mem to store write data from user space onto kernel space
 	// Ref: https://manpages.org/kmalloc/9
@@ -473,7 +474,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     // Check new line char
     // Ref: https://www.man7.org/linux/man-pages/man3/memchr.3.html
     // Scan mem for '\n' char
-    *newline_ptr = memchr(write_data_uspace, '\n', count);
+    newline_ptr = memchr(write_data_uspace, '\n', count);
     if(newline_ptr != NULL)  // Found '\n'
     {
         // add to CB(buffer, entry)

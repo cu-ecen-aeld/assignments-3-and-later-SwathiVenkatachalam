@@ -30,6 +30,12 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
     uint8_t out_offs = 0;
+    
+        // Variable to loop through buffer
+    uint8_t entry_num = 0;
+    
+    // Var to store total offset
+    size_t total_offset = 0;
     // Check input for NULL ptr before dereferencing it
 	if(buffer == NULL)
     	return NULL;
@@ -41,11 +47,6 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     // The first location in the entry structure to read from; stored in local var
     out_offs = buffer->out_offs;
     
-    // Variable to loop through buffer
-    uint8_t entry_num = 0;
-    
-    // Var to store total offset
-    size_t total_offset = 0;
     
     // Loop until max possible reached
     while (entry_num < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
